@@ -1349,7 +1349,8 @@ class DataFetcherManager:
 
         # ----------------------------------------------------------
         # 美股 (指数 + 个股) / 港股 — 专用双源路由
-        #   配置长桥后: Longbridge 首选, YFinance/AkShare 补充
+        #   配置长桥后: Longbridge 首选；港股不再退回慢速 AkShare 阻塞页面
+        #                 美股仍使用 YFinance 补充
         #   未配置长桥: YFinance/AkShare 首选, Longbridge 补充
         #   美股指数:   始终 YFinance 首选（Longbridge 不提供指数行情）
         # ----------------------------------------------------------
@@ -1375,6 +1376,15 @@ class DataFetcherManager:
             primary_quote = self._try_fetcher_quote(stock_code, primary_src, **primary_kw)
             if primary_quote is not None:
                 logger.info(f"[实时行情] {market_label} {stock_code} 成功获取 (来源: {primary_src})")
+                if is_hk and prefer_lb:
+                    return primary_quote
+            elif is_hk and prefer_lb:
+                if log_final_failure:
+                    logger.info(
+                        f"[实时行情] 港股 {stock_code} Longbridge 暂无可用数据，"
+                        "跳过 AkShare 慢速兜底以避免页面超时"
+                    )
+                return None
             primary_quote = self._supplement_quote(
                 stock_code, primary_quote, secondary_src, **secondary_kw,
             )
