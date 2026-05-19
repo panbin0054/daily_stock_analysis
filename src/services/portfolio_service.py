@@ -1060,18 +1060,6 @@ class PortfolioService:
         today = date.today()
         cache_key = (self._normalize_symbol_for_position(symbol), (market or "").strip().lower(), as_of_date.isoformat())
 
-        close = self.repo.get_latest_close_with_date(symbol=symbol, as_of=as_of_date)
-        if close is not None:
-            close_price, close_date = close
-            if close_price > 0:
-                return _ResolvedPositionPrice(
-                    price=float(close_price),
-                    source="history_close",
-                    price_date=close_date,
-                    is_stale=close_date < as_of_date,
-                    is_available=True,
-                )
-
         cached = self._resolved_price_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -1079,44 +1067,12 @@ class PortfolioService:
         is_cn_etf = self._is_cn_etf_position(symbol=symbol, market=market)
         normalized_market = (market or "").strip().lower()
 
-        if as_of_date == today and is_cn_etf:
-            realtime_price, provider = self._fetch_tencent_position_price(symbol=symbol, market=market)
-            if realtime_price is None or realtime_price <= 0:
-                realtime_price, provider = self._fetch_cn_etf_position_price(symbol)
-            if realtime_price is not None and realtime_price > 0:
-                resolved = _ResolvedPositionPrice(
-                    price=float(realtime_price),
-                    source="realtime_quote",
-                    price_date=today,
-                    is_stale=False,
-                    is_available=True,
-                    provider=provider,
-                )
-                self._resolved_price_cache[cache_key] = resolved
-                return resolved
-            return _ResolvedPositionPrice(
-                price=0.0,
-                source="missing",
-                price_date=None,
-                is_stale=True,
-                is_available=False,
-            )
-
+        # When as_of_date is today, prioritize realtime quotes over stale DB close prices
         if as_of_date == today:
-            realtime_price, provider = self._fetch_realtime_position_price(symbol)
-            if realtime_price is not None and realtime_price > 0:
-                resolved = _ResolvedPositionPrice(
-                    price=float(realtime_price),
-                    source="realtime_quote",
-                    price_date=today,
-                    is_stale=False,
-                    is_available=True,
-                    provider=provider,
-                )
-                self._resolved_price_cache[cache_key] = resolved
-                return resolved
-            if normalized_market in {"hk", "hongkong", "hong_kong"}:
+            if is_cn_etf:
                 realtime_price, provider = self._fetch_tencent_position_price(symbol=symbol, market=market)
+                if realtime_price is None or realtime_price <= 0:
+                    realtime_price, provider = self._fetch_cn_etf_position_price(symbol)
                 if realtime_price is not None and realtime_price > 0:
                     resolved = _ResolvedPositionPrice(
                         price=float(realtime_price),
@@ -1128,6 +1084,47 @@ class PortfolioService:
                     )
                     self._resolved_price_cache[cache_key] = resolved
                     return resolved
+            else:
+                realtime_price, provider = self._fetch_realtime_position_price(symbol)
+                if realtime_price is not None and realtime_price > 0:
+                    resolved = _ResolvedPositionPrice(
+                        price=float(realtime_price),
+                        source="realtime_quote",
+                        price_date=today,
+                        is_stale=False,
+                        is_available=True,
+                        provider=provider,
+                    )
+                    self._resolved_price_cache[cache_key] = resolved
+                    return resolved
+                if normalized_market in {"hk", "hongkong", "hong_kong"}:
+                    realtime_price, provider = self._fetch_tencent_position_price(symbol=symbol, market=market)
+                    if realtime_price is not None and realtime_price > 0:
+                        resolved = _ResolvedPositionPrice(
+                            price=float(realtime_price),
+                            source="realtime_quote",
+                            price_date=today,
+                            is_stale=False,
+                            is_available=True,
+                            provider=provider,
+                        )
+                        self._resolved_price_cache[cache_key] = resolved
+                        return resolved
+
+        # Fallback to DB historical close price
+        close = self.repo.get_latest_close_with_date(symbol=symbol, as_of=as_of_date)
+        if close is not None:
+            close_price, close_date = close
+            if close_price > 0:
+                resolved = _ResolvedPositionPrice(
+                    price=float(close_price),
+                    source="history_close",
+                    price_date=close_date,
+                    is_stale=close_date < as_of_date,
+                    is_available=True,
+                )
+                self._resolved_price_cache[cache_key] = resolved
+                return resolved
 
         return _ResolvedPositionPrice(
             price=0.0,

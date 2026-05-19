@@ -282,25 +282,152 @@ class PortfolioRiskService:
         if cache_key in board_cache:
             return board_cache[cache_key]
 
-        if market != "cn":
-            coverage["unclassified_count"] += 1
-            board_cache[cache_key] = "UNCLASSIFIED"
-            return board_cache[cache_key]
-
+        sector_name: Optional[str] = None
         try:
-            boards = self._fetch_belong_boards(symbol)
-            sector_name = self._pick_primary_board_name(boards)
-            if sector_name:
-                coverage["classified_count"] += 1
-                board_cache[cache_key] = sector_name
-                return board_cache[cache_key]
+            if market == "cn":
+                # 1. tushare stock_basic industry (best for A-shares)
+                sector_name = self._fetch_industry_from_tushare(symbol)
+                # 2. ETF: tushare fund_basic name → infer sector
+                if not sector_name:
+                    sector_name = self._fetch_etf_sector(symbol)
+                # 3. efinance get_belong_board (fallback)
+                if not sector_name:
+                    boards = self._fetch_belong_boards(symbol)
+                    sector_name = self._pick_primary_board_name(boards)
+            elif market in ("hk", "hongkong", "hong_kong"):
+                sector_name = self._fetch_hk_sector(symbol)
         except Exception as exc:
             coverage["failed_count"] += 1
             errors.append(f"{symbol}: {exc}")
+            board_cache[cache_key] = "UNCLASSIFIED"
+            return board_cache[cache_key]
 
-        coverage["unclassified_count"] += 1
-        board_cache[cache_key] = "UNCLASSIFIED"
+        if sector_name:
+            coverage["classified_count"] += 1
+            board_cache[cache_key] = sector_name
+        else:
+            coverage["unclassified_count"] += 1
+            board_cache[cache_key] = "UNCLASSIFIED"
         return board_cache[cache_key]
+
+    # ---- Sector data fetchers ----
+
+    _tushare_industry_cache: Optional[Dict[str, str]] = None
+
+    def _fetch_industry_from_tushare(self, symbol: str) -> Optional[str]:
+        """Get industry from tushare stock_basic (A-shares, batch-cached)."""
+        if PortfolioRiskService._tushare_industry_cache is None:
+            PortfolioRiskService._tushare_industry_cache = self._load_tushare_industry_map()
+        return PortfolioRiskService._tushare_industry_cache.get(symbol)
+
+    def _load_tushare_industry_map(self) -> Dict[str, str]:
+        """Load full A-share industry mapping from tushare (one API call)."""
+        try:
+            import tushare as ts
+            import os
+            token = os.environ.get("TUSHARE_TOKEN", "")
+            if not token:
+                return {}
+            ts.set_token(token)
+            pro = ts.pro_api()
+            df = pro.stock_basic(exchange="", list_status="L", fields="ts_code,industry")
+            if df is None or df.empty:
+                return {}
+            result: Dict[str, str] = {}
+            for _, row in df.iterrows():
+                ts_code = str(row.get("ts_code", ""))
+                industry = str(row.get("industry", "")).strip()
+                if ts_code and industry:
+                    code = ts_code.split(".")[0]
+                    result[code] = industry
+            return result
+        except Exception:
+            return {}
+
+    _tushare_etf_cache: Optional[Dict[str, str]] = None
+
+    # ETF name → sector keyword mapping
+    _ETF_SECTOR_KEYWORDS = (
+        ("光伏", "光伏"), ("新能源", "新能源"), ("半导体", "半导体"),
+        ("芯片", "半导体"), ("医药", "医药"), ("医疗", "医疗"),
+        ("消费", "消费"), ("白酒", "白酒"), ("食品", "食品饮料"),
+        ("银行", "银行"), ("证券", "证券"), ("券商", "证券"),
+        ("保险", "保险"), ("金融", "金融"), ("地产", "房地产"),
+        ("军工", "军工"), ("科技", "科技"), ("信息", "信息技术"),
+        ("通信", "通信"), ("电子", "电子"), ("计算机", "计算机"),
+        ("互联网", "互联网"), ("传媒", "传媒"), ("汽车", "汽车"),
+        ("锂电", "锂电池"), ("电池", "锂电池"), ("储能", "储能"),
+        ("钢铁", "钢铁"), ("煤炭", "煤炭"), ("有色", "有色金属"),
+        ("化工", "化工"), ("电力", "电力"), ("环保", "环保"),
+        ("农业", "农业"), ("家电", "家电"), ("机械", "机械"),
+        ("机器人", "机器人"), ("人工智能", "人工智能"),
+        ("红利", "红利/价值"), ("央企", "央国企"), ("国企", "央国企"),
+        ("沪深300", "大盘综合"), ("中证500", "中盘综合"),
+        ("上证50", "大盘综合"), ("恒生", "港股综合"),
+    )
+
+    def _fetch_etf_sector(self, symbol: str) -> Optional[str]:
+        """Infer ETF sector from fund name via tushare fund_basic."""
+        if PortfolioRiskService._tushare_etf_cache is None:
+            PortfolioRiskService._tushare_etf_cache = self._load_tushare_etf_map()
+        return PortfolioRiskService._tushare_etf_cache.get(symbol)
+
+    def _load_tushare_etf_map(self) -> Dict[str, str]:
+        """Load ETF sector mapping from tushare fund_basic."""
+        try:
+            import tushare as ts
+            import os
+            token = os.environ.get("TUSHARE_TOKEN", "")
+            if not token:
+                return {}
+            ts.set_token(token)
+            pro = ts.pro_api()
+            df = pro.fund_basic(market="E", status="L")
+            if df is None or df.empty:
+                return {}
+            result: Dict[str, str] = {}
+            for _, row in df.iterrows():
+                ts_code = str(row.get("ts_code", ""))
+                name = str(row.get("name", "")).strip()
+                if not ts_code or not name:
+                    continue
+                code = ts_code.split(".")[0]
+                for keyword, sector in self._ETF_SECTOR_KEYWORDS:
+                    if keyword in name:
+                        result[code] = sector
+                        break
+            return result
+        except Exception:
+            return {}
+
+    # Well-known HK stock → sector mapping
+    _HK_SECTOR_MAP: Dict[str, str] = {
+        "00700": "互联网", "09988": "互联网", "09618": "互联网",
+        "03690": "互联网", "01024": "互联网", "09888": "互联网",
+        "00388": "金融", "01299": "保险", "02318": "保险",
+        "02628": "保险", "00005": "银行", "03988": "银行",
+        "01398": "银行", "00939": "银行", "03968": "银行",
+        "00941": "通信", "00728": "通信", "06060": "通信",
+        "02382": "电子", "01810": "电子", "09999": "医疗",
+        "02269": "医疗", "06098": "汽车", "01211": "汽车",
+        "02015": "汽车", "09868": "汽车", "00175": "汽车",
+        "02333": "消费", "02020": "教育", "06862": "医疗",
+        "01177": "医疗", "06618": "金融", "06082": "半导体",
+        "00241": "科技", "09961": "物流", "02688": "消费",
+        "01919": "航运", "00883": "石油化工", "00857": "石油化工",
+        "02899": "新能源", "01347": "软件", "00981": "半导体",
+        "00020": "地产", "01109": "地产", "02007": "地产",
+        "09626": "电商", "01833": "消费", "06969": "消费",
+    }
+
+    def _fetch_hk_sector(self, symbol: str) -> Optional[str]:
+        """Get HK stock sector from static mapping."""
+        padded = symbol.zfill(5)
+        return self._HK_SECTOR_MAP.get(padded)
+
+    def _fetch_us_sector(self, symbol: str) -> Optional[str]:
+        """Placeholder for US stock sector lookup."""
+        return None
 
     def _fetch_belong_boards(self, symbol: str) -> List[Dict[str, Any]]:
         manager = self._get_data_manager()
@@ -311,12 +438,33 @@ class PortfolioRiskService:
             return result
         return []
 
+    # Keywords that indicate a board is NOT an industry sector
+    _NON_INDUSTRY_KEYWORDS = (
+        "概念", "板块", "沪股通", "深股通", "融资融券", "证金持股",
+        "机构重仓", "百元股", "破净股", "大盘股", "小盘股", "中盘股",
+        "周期股", "成长股", "价值股", "HS300", "上证", "深证",
+        "MSCI", "标准普尔", "富时罗素", "GDR", "AH股",
+        "做市商", "参股", "持股", "重仓",
+    )
+
     @staticmethod
     def _pick_primary_board_name(boards: List[Dict[str, Any]]) -> Optional[str]:
         if not boards:
             return None
 
-        preferred: Optional[str] = None
+        # If any board has explicit type "行业" or "industry", use it directly
+        for item in boards:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip()
+            if not name:
+                continue
+            type_text = str(item.get("type") or "").strip().lower()
+            if "行业" in type_text or "industry" in type_text:
+                return name
+
+        # Otherwise, find the first board that looks like an industry sector
+        # (i.e., exclude concept/region/index boards by keywords)
         fallback: Optional[str] = None
         for item in boards:
             if not isinstance(item, dict):
@@ -326,11 +474,14 @@ class PortfolioRiskService:
                 continue
             if fallback is None:
                 fallback = name
-            type_text = str(item.get("type") or "").strip().lower()
-            if "行业" in type_text or "industry" in type_text:
-                preferred = name
-                break
-        return preferred or fallback
+            # Skip boards whose names contain non-industry keywords
+            if any(kw in name for kw in PortfolioRiskService._NON_INDUSTRY_KEYWORDS):
+                continue
+            # Skip region boards (ending with 板块 is already caught above)
+            # The remaining board is likely an industry sector
+            return name
+
+        return fallback
 
     def _get_data_manager(self):
         if self._data_manager is not None:
