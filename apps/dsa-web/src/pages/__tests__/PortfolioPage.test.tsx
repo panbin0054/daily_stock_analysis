@@ -245,6 +245,40 @@ describe('PortfolioPage FX refresh', () => {
     expect(screen.getByRole('button', { name: '刷新汇率' })).toBeInTheDocument();
   });
 
+  it('renders stop-loss warning details with account and symbol', async () => {
+    getRisk.mockResolvedValueOnce({
+      ...makeRisk(),
+      stopLoss: {
+        nearAlert: true,
+        triggeredCount: 1,
+        nearCount: 1,
+        items: [
+          {
+            accountId: 2,
+            accountName: '富途港股',
+            symbol: '00700',
+            market: 'hk',
+            currency: 'HKD',
+            avgCost: 500,
+            lastPrice: 455,
+            lossPct: 9,
+            nearThresholdPct: 8,
+            isTriggered: false,
+          },
+        ],
+      },
+    });
+
+    render(<PortfolioPage />);
+
+    await waitForInitialLoad();
+
+    expect(screen.getByText('富途港股 · 00700')).toBeInTheDocument();
+    expect(screen.getByText('HK · 成本 HKD 500.00 / 现价 HKD 455.00')).toBeInTheDocument();
+    expect(screen.getByText('亏损 9.00%，预警线 8.00%')).toBeInTheDocument();
+    expect(screen.getByText('接近')).toBeInTheDocument();
+  });
+
   it('refreshes FX for a single selected account and only reloads snapshot/risk', async () => {
     getSnapshot
       .mockResolvedValueOnce(makeSnapshot({ fxStale: true }))

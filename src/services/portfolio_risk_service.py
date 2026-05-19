@@ -423,7 +423,10 @@ class PortfolioRiskService:
                 warnings.append(
                     {
                         "account_id": account.get("account_id"),
+                        "account_name": account.get("account_name"),
                         "symbol": pos.get("symbol"),
+                        "market": pos.get("market"),
+                        "currency": pos.get("currency"),
                         "avg_cost": round(avg_cost, 8),
                         "last_price": round(last_price, 8),
                         "loss_pct": round(loss_pct, 4),

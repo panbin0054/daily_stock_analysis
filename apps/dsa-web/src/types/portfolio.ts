@@ -107,7 +107,10 @@ export interface PortfolioDrawdownBlock {
 
 export interface PortfolioStopLossItem {
   accountId: number;
+  accountName?: string | null;
   symbol: string;
+  market?: string | null;
+  currency?: string | null;
   avgCost: number;
   lastPrice: number;
   lossPct: number;

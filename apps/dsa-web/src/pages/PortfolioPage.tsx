@@ -1103,6 +1103,35 @@ const PortfolioPage: React.FC = () => {
             <div>接近数: {risk?.stopLoss?.nearCount ?? 0}</div>
             <div>告警: {risk?.stopLoss?.nearAlert ? '是' : '否'}</div>
           </div>
+          {risk?.stopLoss?.items?.length ? (
+            <div className="mt-3 space-y-2">
+              {risk.stopLoss.items.slice(0, 5).map((item) => (
+                <div
+                  key={`${item.accountId}-${item.symbol}`}
+                  className="rounded-lg border border-border/70 bg-surface-subtle px-3 py-2 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate font-medium text-foreground">
+                        {item.accountName || `账户 ${item.accountId}`} · {item.symbol}
+                      </div>
+                      <div className="mt-1 text-secondary">
+                        {item.market ? `${item.market.toUpperCase()} · ` : ''}
+                        成本 {formatMoney(item.avgCost, item.currency || snapshot?.currency || 'CNY')} / 现价{' '}
+                        {formatMoney(item.lastPrice, item.currency || snapshot?.currency || 'CNY')}
+                      </div>
+                    </div>
+                    <Badge variant={item.isTriggered ? 'danger' : 'warning'}>
+                      {item.isTriggered ? '已触发' : '接近'}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 text-secondary">
+                    亏损 {formatPct(item.lossPct)}，预警线 {formatPct(item.nearThresholdPct)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </Card>
         <Card padding="md">
           <h3 className="text-sm font-semibold text-foreground mb-2">口径</h3>

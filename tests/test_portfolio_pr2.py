@@ -354,6 +354,12 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertTrue(report["drawdown"]["alert"])
         self.assertTrue(report["stop_loss"]["near_alert"])
         self.assertGreaterEqual(report["stop_loss"]["triggered_count"], 1)
+        stop_loss_item = report["stop_loss"]["items"][0]
+        self.assertEqual(stop_loss_item["account_id"], aid)
+        self.assertEqual(stop_loss_item["account_name"], "Main")
+        self.assertEqual(stop_loss_item["symbol"], "600519")
+        self.assertEqual(stop_loss_item["market"], "cn")
+        self.assertEqual(stop_loss_item["currency"], "CNY")
         self.assertAlmostEqual(report["thresholds"]["drawdown_alert_pct"], 10.0, places=6)
 
     def test_risk_drawdown_backfills_snapshot_window_on_first_call(self) -> None:
