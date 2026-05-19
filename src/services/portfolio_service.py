@@ -86,6 +86,8 @@ class _ResolvedPositionPrice:
 class PortfolioService:
     """Business logic for account CRUD, event writes, and snapshot replay."""
 
+    _resolved_price_cache: Dict[Tuple[str, str, str], _ResolvedPositionPrice] = {}
+
     def __init__(self, repo: Optional[PortfolioRepository] = None):
         self.repo = repo or PortfolioRepository()
 
@@ -1000,7 +1002,7 @@ class PortfolioService:
                     }
                 )
 
-            price_info = self._resolve_position_price(symbol=symbol, as_of_date=as_of_date)
+            price_info = self._resolve_position_price(symbol=symbol, market=market, as_of_date=as_of_date)
             last_price = price_info.price
 
             if price_info.is_available:
@@ -1054,8 +1056,9 @@ class PortfolioService:
 
         return position_rows, lot_rows, market_value_base, total_cost_base, fx_stale
 
-    def _resolve_position_price(self, *, symbol: str, as_of_date: date) -> _ResolvedPositionPrice:
+    def _resolve_position_price(self, *, symbol: str, market: str, as_of_date: date) -> _ResolvedPositionPrice:
         today = date.today()
+        cache_key = (self._normalize_symbol_for_position(symbol), (market or "").strip().lower(), as_of_date.isoformat())
 
         close = self.repo.get_latest_close_with_date(symbol=symbol, as_of=as_of_date)
         if close is not None:
@@ -1069,10 +1072,19 @@ class PortfolioService:
                     is_available=True,
                 )
 
-        if as_of_date == today:
-            realtime_price, provider = self._fetch_realtime_position_price(symbol)
+        cached = self._resolved_price_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        is_cn_etf = self._is_cn_etf_position(symbol=symbol, market=market)
+        normalized_market = (market or "").strip().lower()
+
+        if as_of_date == today and is_cn_etf:
+            realtime_price, provider = self._fetch_tencent_position_price(symbol=symbol, market=market)
+            if realtime_price is None or realtime_price <= 0:
+                realtime_price, provider = self._fetch_cn_etf_position_price(symbol)
             if realtime_price is not None and realtime_price > 0:
-                return _ResolvedPositionPrice(
+                resolved = _ResolvedPositionPrice(
                     price=float(realtime_price),
                     source="realtime_quote",
                     price_date=today,
@@ -1080,6 +1092,42 @@ class PortfolioService:
                     is_available=True,
                     provider=provider,
                 )
+                self._resolved_price_cache[cache_key] = resolved
+                return resolved
+            return _ResolvedPositionPrice(
+                price=0.0,
+                source="missing",
+                price_date=None,
+                is_stale=True,
+                is_available=False,
+            )
+
+        if as_of_date == today:
+            realtime_price, provider = self._fetch_realtime_position_price(symbol)
+            if realtime_price is not None and realtime_price > 0:
+                resolved = _ResolvedPositionPrice(
+                    price=float(realtime_price),
+                    source="realtime_quote",
+                    price_date=today,
+                    is_stale=False,
+                    is_available=True,
+                    provider=provider,
+                )
+                self._resolved_price_cache[cache_key] = resolved
+                return resolved
+            if normalized_market in {"hk", "hongkong", "hong_kong"}:
+                realtime_price, provider = self._fetch_tencent_position_price(symbol=symbol, market=market)
+                if realtime_price is not None and realtime_price > 0:
+                    resolved = _ResolvedPositionPrice(
+                        price=float(realtime_price),
+                        source="realtime_quote",
+                        price_date=today,
+                        is_stale=False,
+                        is_available=True,
+                        provider=provider,
+                    )
+                    self._resolved_price_cache[cache_key] = resolved
+                    return resolved
 
         return _ResolvedPositionPrice(
             price=0.0,
@@ -1088,6 +1136,68 @@ class PortfolioService:
             is_stale=True,
             is_available=False,
         )
+
+    @staticmethod
+    def _is_cn_etf_position(*, symbol: str, market: str) -> bool:
+        normalized_market = (market or "").strip().lower()
+        normalized_symbol = PortfolioService._normalize_symbol_for_position(symbol)
+        return (
+            normalized_market == "cn"
+            and normalized_symbol.isdigit()
+            and len(normalized_symbol) == 6
+            and normalized_symbol.startswith(("51", "52", "56", "58", "15", "16", "18"))
+        )
+
+    @staticmethod
+    def _fetch_cn_etf_position_price(symbol: str) -> Tuple[Optional[float], Optional[str]]:
+        normalized = PortfolioService._normalize_symbol_for_position(symbol)
+        if not normalized.isdigit() or len(normalized) != 6:
+            return None, None
+        secid = f"{'1' if normalized.startswith(('51', '52', '56', '58')) else '0'}.{normalized}"
+        try:
+            response = requests.get(
+                "https://push2.eastmoney.com/api/qt/stock/get",
+                params={"secid": secid, "fields": "f43,f57,f58"},
+                timeout=5,
+            )
+            response.raise_for_status()
+            data = (response.json() or {}).get("data") or {}
+            raw_price = data.get("f43")
+            price = float(raw_price) / 1000.0
+        except Exception as exc:
+            logger.warning("Failed to fetch Eastmoney ETF quote for %s: %s", normalized, exc)
+            return None, None
+        if price <= 0:
+            return None, None
+        return price, "eastmoney"
+
+    @staticmethod
+    def _fetch_tencent_position_price(*, symbol: str, market: str) -> Tuple[Optional[float], Optional[str]]:
+        normalized = PortfolioService._normalize_symbol_for_position(symbol)
+        normalized_market = (market or "").strip().lower()
+        if not normalized:
+            return None, None
+        if normalized_market in {"hk", "hongkong", "hong_kong"}:
+            query_symbol = f"hk{normalized.zfill(5)}"
+        elif normalized_market == "cn" and normalized.isdigit() and len(normalized) == 6:
+            prefix = "sh" if normalized.startswith(("5", "6", "9")) else "sz"
+            query_symbol = f"{prefix}{normalized}"
+        else:
+            return None, None
+
+        try:
+            response = requests.get(f"https://qt.gtimg.cn/q={query_symbol}", timeout=5)
+            response.raise_for_status()
+            text = response.text or ""
+            payload = text.split('"', 2)[1] if '"' in text else text
+            fields = payload.split("~")
+            price = float(fields[3])
+        except Exception as exc:
+            logger.warning("Failed to fetch Tencent quote for %s: %s", query_symbol, exc)
+            return None, None
+        if price <= 0:
+            return None, None
+        return price, "tencent"
 
     @staticmethod
     def _fetch_realtime_position_price(symbol: str) -> Tuple[Optional[float], Optional[str]]:

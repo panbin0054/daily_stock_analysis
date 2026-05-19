@@ -413,9 +413,11 @@ class PortfolioRiskService:
         warnings: List[Dict[str, Any]] = []
         for account in snapshot.get("accounts", []):
             for pos in account.get("positions", []):
+                if pos.get("price_available") is False:
+                    continue
                 avg_cost = float(pos.get("avg_cost", 0.0) or 0.0)
                 last_price = float(pos.get("last_price", 0.0) or 0.0)
-                if avg_cost <= 0:
+                if avg_cost <= 0 or last_price <= 0:
                     continue
                 loss_pct = max(0.0, (avg_cost - last_price) / avg_cost * 100.0)
                 if loss_pct < near_threshold:

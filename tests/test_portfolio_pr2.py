@@ -362,6 +362,34 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertEqual(stop_loss_item["currency"], "CNY")
         self.assertAlmostEqual(report["thresholds"]["drawdown_alert_pct"], 10.0, places=6)
 
+    def test_stop_loss_ignores_positions_without_available_price(self) -> None:
+        report = PortfolioRiskService._build_stop_loss(
+            {
+                "accounts": [
+                    {
+                        "account_id": 1,
+                        "account_name": "Main",
+                        "positions": [
+                            {
+                                "symbol": "00700",
+                                "market": "hk",
+                                "currency": "HKD",
+                                "avg_cost": 400.0,
+                                "last_price": 0.0,
+                                "price_available": False,
+                            }
+                        ],
+                    }
+                ]
+            },
+            {"stop_loss_alert_pct": 25.0, "stop_loss_near_ratio": 0.8},
+        )
+
+        self.assertFalse(report["near_alert"])
+        self.assertEqual(report["near_count"], 0)
+        self.assertEqual(report["triggered_count"], 0)
+        self.assertEqual(report["items"], [])
+
     def test_risk_drawdown_backfills_snapshot_window_on_first_call(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]

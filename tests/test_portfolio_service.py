@@ -50,11 +50,13 @@ class PortfolioServiceTestCase(unittest.TestCase):
         DatabaseManager.reset_instance()
 
         self.db = DatabaseManager.get_instance()
+        PortfolioService._resolved_price_cache.clear()
         self.service = PortfolioService()
 
     def tearDown(self) -> None:
         DatabaseManager.reset_instance()
         Config.reset_instance()
+        PortfolioService._resolved_price_cache.clear()
         os.environ.pop("ENV_FILE", None)
         os.environ.pop("DATABASE_PATH", None)
         self.temp_dir.cleanup()
@@ -166,6 +168,41 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertEqual(pos["price_source"], "history_close")
         self.assertTrue(pos["price_available"])
 
+    def test_current_snapshot_uses_lightweight_cn_etf_quote_when_close_missing(self) -> None:
+        today = date.today()
+        account = self.service.create_account(name="ETF", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+        self.service.record_trade(
+            account_id=aid,
+            symbol="515790",
+            trade_date=today,
+            side="buy",
+            quantity=1000,
+            price=1.2,
+            market="cn",
+            currency="CNY",
+        )
+
+        quote_response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            text='v_sh515790="1~光伏ETF华泰柏瑞~515790~1.101~1.108~1.097";',
+        )
+        with patch.object(
+            PortfolioService,
+            "_fetch_realtime_position_price",
+            side_effect=AssertionError("A-share ETF realtime quote should not block portfolio page"),
+        ), patch("src.services.portfolio_service.requests.get", return_value=quote_response) as mock_get:
+            snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=today, cost_method="fifo")
+
+        pos = snapshot["accounts"][0]["positions"][0]
+        self.assertEqual(pos["symbol"], "515790")
+        self.assertAlmostEqual(pos["last_price"], 1.101, places=6)
+        self.assertAlmostEqual(pos["market_value_base"], 1101.0, places=6)
+        self.assertEqual(pos["price_source"], "realtime_quote")
+        self.assertEqual(pos["price_provider"], "tencent")
+        self.assertTrue(pos["price_available"])
+        self.assertEqual(mock_get.call_args.args[0], "https://qt.gtimg.cn/q=sh515790")
+
     def test_historical_snapshot_marks_missing_price_without_cost_fallback(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]
@@ -200,6 +237,40 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertTrue(pos["price_stale"])
         self.assertEqual(snapshot["accounts"][0]["total_market_value"], 0.0)
         self.assertEqual(snapshot["accounts"][0]["unrealized_pnl"], 0.0)
+
+    def test_current_snapshot_uses_tencent_hk_quote_when_realtime_missing(self) -> None:
+        today = date.today()
+        account = self.service.create_account(name="HK", broker="Demo", market="hk", base_currency="HKD")
+        aid = account["id"]
+        self.service.record_trade(
+            account_id=aid,
+            symbol="00700",
+            trade_date=today,
+            side="buy",
+            quantity=10,
+            price=456.0,
+            market="hk",
+            currency="HKD",
+        )
+
+        quote_response = SimpleNamespace(
+            raise_for_status=lambda: None,
+            text='v_hk00700="100~腾讯控股~00700~449.200~456.400~455.000";',
+        )
+        with patch.object(
+            PortfolioService,
+            "_fetch_realtime_position_price",
+            return_value=(None, None),
+        ), patch("src.services.portfolio_service.requests.get", return_value=quote_response) as mock_get:
+            snapshot = self.service.get_portfolio_snapshot(account_id=aid, as_of=today, cost_method="fifo")
+
+        pos = snapshot["accounts"][0]["positions"][0]
+        self.assertEqual(pos["symbol"], "00700")
+        self.assertAlmostEqual(pos["last_price"], 449.2, places=6)
+        self.assertEqual(pos["price_source"], "realtime_quote")
+        self.assertEqual(pos["price_provider"], "tencent")
+        self.assertTrue(pos["price_available"])
+        self.assertEqual(mock_get.call_args.args[0], "https://qt.gtimg.cn/q=hk00700")
 
     def test_snapshot_fifo_vs_avg_on_partial_sell(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
