@@ -177,6 +177,11 @@ describe('HomePage', () => {
     );
 
     expect(await screen.findByText('开始分析')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'DSA 使用方式' })).toBeInTheDocument();
+    expect(screen.getByText('收益来自流程，风险先于判断')).toBeInTheDocument();
+    expect(screen.getByText('先判断环境')).toBeInTheDocument();
+    expect(screen.getByText('用持仓约束风险')).toBeInTheDocument();
+    expect(screen.getByText(/适合散户的 DSA 节奏/)).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: '开始分析', level: 3 })).toBeInTheDocument();
     expect(screen.getByText('输入股票代码进行分析，或从左侧选择历史报告查看。')).toBeInTheDocument();
     expect(screen.getByText('暂无历史分析记录')).toBeInTheDocument();

@@ -1,13 +1,13 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Check, SlidersHorizontal } from 'lucide-react';
+import { BarChart3, BellRing, Check, ClipboardList, Compass, LineChart, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { getParsedApiError, type ParsedApiError } from '../api/error';
 import { analysisApi } from '../api/analysis';
 import { agentApi, type SkillInfo } from '../api/agent';
 import { systemConfigApi } from '../api/systemConfig';
 import { ApiErrorAlert, ConfirmDialog, Button, EmptyState, InlineAlert } from '../components/common';
-import { DashboardStateBlock } from '../components/dashboard';
+import { DashboardPanelHeader, DashboardStateBlock } from '../components/dashboard';
 import { StockAutocomplete } from '../components/StockAutocomplete';
 import { HistoryList } from '../components/history';
 import { ReportMarkdown, ReportSummary } from '../components/report';
@@ -21,6 +21,34 @@ type MarketReviewNotice = {
   title: string;
   message: string;
 } | null;
+
+const dsaUsagePrinciples = [
+  {
+    title: '先判断环境',
+    description: '每天先跑大盘复盘，确认市场风格、风险偏好和仓位上限；环境不友好时，少做比多做更重要。',
+    icon: Compass,
+  },
+  {
+    title: '再筛选标的',
+    description: '对自选股逐个分析，把 AI 报告当作第二意见：重点看趋势、情绪、风险点和操作建议是否一致。',
+    icon: LineChart,
+  },
+  {
+    title: '用持仓约束风险',
+    description: '资金流、持仓成本和回撤监控要持续维护；先控制单票仓位、总仓位和止损线，再追求收益率。',
+    icon: ShieldCheck,
+  },
+  {
+    title: '让通知盯纪律',
+    description: 'Telegram 等通知渠道用于接收分析结果、任务状态和告警提醒，减少错过关键变化，也避免频繁盯盘。',
+    icon: BellRing,
+  },
+  {
+    title: '靠复盘提高胜率',
+    description: '保留历史报告，对比当时判断和后续走势，沉淀适合自己的买点、卖点、仓位和不做清单。',
+    icon: ClipboardList,
+  },
+];
 
 const HomePage: React.FC = () => {
   const navigate = useNavigate();
@@ -782,6 +810,39 @@ const HomePage: React.FC = () => {
                 onDismiss={clearError}
               />
             ) : null}
+            <section
+              aria-label="DSA 使用方式"
+              className="home-panel-card mb-4 rounded-xl border border-subtle bg-surface/80 p-4 text-left shadow-sm"
+            >
+              <DashboardPanelHeader
+                title="DSA 使用方式"
+                eyebrow="收益来自流程，风险先于判断"
+                accentEyebrow
+                className="mb-3"
+              />
+              <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-5">
+                {dsaUsagePrinciples.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <div
+                      key={item.title}
+                      className="rounded-lg border border-subtle bg-background/55 p-3"
+                    >
+                      <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+                          <Icon className="h-4 w-4" aria-hidden="true" />
+                        </span>
+                        <span>{item.title}</span>
+                      </div>
+                      <p className="text-xs leading-5 text-secondary-text">{item.description}</p>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-3 rounded-lg border border-subtle bg-background/50 px-3 py-2 text-xs leading-5 text-muted-text">
+                适合散户的 DSA 节奏：用系统扩大信息覆盖，用仓位和回撤保护本金，用复盘持续修正自己的交易习惯。
+              </p>
+            </section>
             {isLoadingReport ? (
               <div className="flex h-full flex-col items-center justify-center">
                 <DashboardStateBlock title="加载报告中..." loading />
