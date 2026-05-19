@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+import requests
+
 from data_provider.base import canonical_stock_code, normalize_stock_code
 from src.config import get_config
 from src.repositories.portfolio_repo import (
@@ -35,6 +37,7 @@ VALID_SIDES = {"buy", "sell"}
 VALID_CASH_DIRECTIONS = {"in", "out"}
 VALID_CORPORATE_ACTIONS = {"cash_dividend", "split_adjustment"}
 PORTFOLIO_FX_REFRESH_DISABLED_REASON = "portfolio_fx_update_disabled"
+PORTFOLIO_AGGREGATE_CURRENCY = "CNY"
 
 
 class PortfolioConflictError(Exception):
@@ -459,7 +462,7 @@ class PortfolioService:
             account_rows = self.repo.list_accounts(include_inactive=False)
 
         accounts_payload: List[Dict[str, Any]] = []
-        aggregate_currency = "CNY"
+        aggregate_currency = PORTFOLIO_AGGREGATE_CURRENCY
         aggregate = {
             "total_cash": 0.0,
             "total_market_value": 0.0,
@@ -1383,35 +1386,44 @@ class PortfolioService:
             as_of_date=as_of_date,
             strict=refresh_enabled,
         )
+        base_currency = self._normalize_currency(account.base_currency)
+        refresh_pairs = {
+            (from_currency, base_currency)
+            for from_currency in refresh_currencies
+            if from_currency != base_currency
+        }
+        aggregate_currency = self._normalize_currency(PORTFOLIO_AGGREGATE_CURRENCY)
+        if base_currency != aggregate_currency:
+            refresh_pairs.add((base_currency, aggregate_currency))
+
         if not refresh_enabled:
             return {
-                "pair_count": len(refresh_currencies),
+                "pair_count": len(refresh_pairs),
                 "updated_count": 0,
                 "stale_count": 0,
                 "error_count": 0,
             }
 
-        base_currency = self._normalize_currency(account.base_currency)
         summary = {
-            "pair_count": len(refresh_currencies),
+            "pair_count": len(refresh_pairs),
             "updated_count": 0,
             "stale_count": 0,
             "error_count": 0,
         }
-        for from_currency in refresh_currencies:
+        for from_currency, to_currency in sorted(refresh_pairs):
             try:
                 rate = self._fetch_fx_rate_from_yfinance(
                     from_currency=from_currency,
-                    to_currency=base_currency,
+                    to_currency=to_currency,
                     as_of_date=as_of_date,
                 )
                 if rate is not None and rate > 0:
                     self.repo.save_fx_rate(
                         from_currency=from_currency,
-                        to_currency=base_currency,
+                        to_currency=to_currency,
                         rate_date=as_of_date,
                         rate=rate,
-                        source="yfinance",
+                        source="online",
                         is_stale=False,
                     )
                     summary["updated_count"] += 1
@@ -1420,20 +1432,20 @@ class PortfolioService:
                 logger.warning(
                     "FX online fetch failed for %s/%s on %s: %s",
                     from_currency,
-                    base_currency,
+                    to_currency,
                     as_of_date.isoformat(),
                     exc,
                 )
 
             fallback = self.repo.get_latest_fx_rate(
                 from_currency=from_currency,
-                to_currency=base_currency,
+                to_currency=to_currency,
                 as_of=as_of_date,
             )
             if fallback is not None and float(fallback.rate or 0.0) > 0:
                 self.repo.save_fx_rate(
                     from_currency=from_currency,
-                    to_currency=base_currency,
+                    to_currency=to_currency,
                     rate_date=as_of_date,
                     rate=float(fallback.rate),
                     source=(fallback.source or "cache_fallback"),
@@ -1452,25 +1464,58 @@ class PortfolioService:
         as_of_date: date,
     ) -> Optional[float]:
         """Fetch latest available FX close rate around as_of date."""
-        if yf is None:
-            return None
-        symbol = f"{from_currency}{to_currency}=X"
-        ticker = yf.Ticker(symbol)
-        history = ticker.history(
-            start=(as_of_date - timedelta(days=7)).isoformat(),
-            end=(as_of_date + timedelta(days=1)).isoformat(),
-            interval="1d",
-            auto_adjust=False,
+        if yf is not None:
+            try:
+                symbol = f"{from_currency}{to_currency}=X"
+                ticker = yf.Ticker(symbol)
+                history = ticker.history(
+                    start=(as_of_date - timedelta(days=7)).isoformat(),
+                    end=(as_of_date + timedelta(days=1)).isoformat(),
+                    interval="1d",
+                    auto_adjust=False,
+                )
+                if history is not None and not history.empty and "Close" in history:
+                    close = history["Close"].dropna()
+                    if not close.empty:
+                        value = float(close.iloc[-1])
+                        if value > 0:
+                            return value
+            except Exception as exc:
+                logger.warning(
+                    "YFinance FX fetch failed for %s/%s on %s: %s",
+                    from_currency,
+                    to_currency,
+                    as_of_date.isoformat(),
+                    exc,
+                )
+        return PortfolioService._fetch_fx_rate_from_open_er_api(
+            from_currency=from_currency,
+            to_currency=to_currency,
         )
-        if history is None or history.empty or "Close" not in history:
+
+    @staticmethod
+    def _fetch_fx_rate_from_open_er_api(
+        *,
+        from_currency: str,
+        to_currency: str,
+    ) -> Optional[float]:
+        """Fetch a latest FX rate from the open.er-api.com free endpoint."""
+        response = requests.get(
+            f"https://open.er-api.com/v6/latest/{from_currency}",
+            timeout=8,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if payload.get("result") != "success":
             return None
-        close = history["Close"].dropna()
-        if close.empty:
+        rates = payload.get("rates") or {}
+        value = rates.get(to_currency)
+        if value is None:
             return None
-        value = float(close.iloc[-1])
-        if value <= 0:
+        rate = float(value)
+        if rate <= 0:
             return None
-        return value
+        return rate
 
     def _require_active_account(self, account_id: int) -> Any:
         account = self.repo.get_account(account_id, include_inactive=False)

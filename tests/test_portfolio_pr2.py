@@ -10,6 +10,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, Dict
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
@@ -561,6 +562,62 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertIsNotNone(latest)
         self.assertTrue(bool(latest.is_stale))
         self.assertAlmostEqual(float(latest.rate), 7.0, places=6)
+
+    def test_fx_refresh_includes_account_base_to_aggregate_currency(self) -> None:
+        account = self.service.create_account(name="HK", broker="Demo", market="hk", base_currency="HKD")
+        aid = account["id"]
+        self.service.record_cash_ledger(
+            account_id=aid,
+            event_date=date(2026, 1, 1),
+            direction="in",
+            amount=1000.0,
+            currency="HKD",
+        )
+
+        with patch.object(PortfolioService, "_fetch_fx_rate_from_yfinance", return_value=0.91) as fetch_mock:
+            summary = self.service.refresh_fx_rates(account_id=aid, as_of=date(2026, 1, 2))
+
+        self.assertEqual(summary["pair_count"], 1)
+        self.assertEqual(summary["updated_count"], 1)
+        fetch_mock.assert_called_once_with(
+            from_currency="HKD",
+            to_currency="CNY",
+            as_of_date=date(2026, 1, 2),
+        )
+        latest = self.service.repo.get_latest_fx_rate(
+            from_currency="HKD",
+            to_currency="CNY",
+            as_of=date(2026, 1, 2),
+        )
+        self.assertIsNotNone(latest)
+        self.assertFalse(bool(latest.is_stale))
+        self.assertAlmostEqual(float(latest.rate), 0.91, places=6)
+
+    def test_fx_fetch_falls_back_to_open_er_api_when_yfinance_fails(self) -> None:
+        class FakeTicker:
+            def history(self, **_: Any) -> Any:
+                raise RuntimeError("rate limited")
+
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> Dict[str, Any]:
+                return {"result": "success", "rates": {"CNY": 0.91}}
+
+        with patch("src.services.portfolio_service.yf") as yf_mock, patch(
+            "src.services.portfolio_service.requests.get",
+            return_value=FakeResponse(),
+        ) as get_mock:
+            yf_mock.Ticker.return_value = FakeTicker()
+            rate = PortfolioService._fetch_fx_rate_from_yfinance(
+                from_currency="HKD",
+                to_currency="CNY",
+                as_of_date=date(2026, 1, 2),
+            )
+
+        self.assertAlmostEqual(rate, 0.91, places=6)
+        get_mock.assert_called_once_with("https://open.er-api.com/v6/latest/HKD", timeout=8)
 
     def test_fx_refresh_disabled_returns_real_pair_count_without_fetching(self) -> None:
         account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="CNY")
