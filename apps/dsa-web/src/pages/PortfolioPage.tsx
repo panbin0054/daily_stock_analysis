@@ -4,7 +4,7 @@ import { Pie, PieChart, ResponsiveContainer, Tooltip, Legend, Cell } from 'recha
 import { portfolioApi } from '../api/portfolio';
 import type { ParsedApiError } from '../api/error';
 import { getParsedApiError } from '../api/error';
-import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, InlineAlert } from '../components/common';
+import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, HelpTip, InlineAlert } from '../components/common';
 import { toDateInputValue } from '../utils/format';
 import type {
   PortfolioAccountItem,
@@ -996,6 +996,7 @@ const PortfolioPage: React.FC = () => {
                   <tr>
                     <th className="text-left py-2 pr-2">账户</th>
                     <th className="text-left py-2 pr-2">代码</th>
+                    <th className="text-left py-2 pr-2">名称</th>
                     <th className="text-right py-2 pr-2">数量</th>
                     <th className="text-right py-2 pr-2">均价</th>
                     <th className="text-right py-2 pr-2">现价</th>
@@ -1009,6 +1010,7 @@ const PortfolioPage: React.FC = () => {
                     <tr key={`${row.accountId}-${row.symbol}-${row.market}`} className="border-b border-white/5">
                       <td className="py-2 pr-2 text-secondary">{row.accountName}</td>
                       <td className="py-2 pr-2 font-mono text-foreground">{row.symbol}</td>
+                      <td className="py-2 pr-2 text-foreground">{row.name || '--'}</td>
                       <td className="py-2 pr-2 text-right">{row.quantity.toFixed(2)}</td>
                       <td className="py-2 pr-2 text-right">{row.avgCost.toFixed(4)}</td>
                       <td className="py-2 pr-2 text-right">
@@ -1049,7 +1051,25 @@ const PortfolioPage: React.FC = () => {
         </Card>
 
         <Card padding="md">
-          <h2 className="text-sm font-semibold text-foreground mb-3">{concentrationMode === 'sector' ? '行业集中度分布' : '行业数据暂不可用，当前展示个股集中度'}</h2>
+          <h2 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-1.5">
+            {concentrationMode === 'sector' ? '行业集中度分布' : '行业数据暂不可用，当前展示个股集中度'}
+            <HelpTip
+              content={
+                <div className="space-y-2">
+                  <p className="font-semibold text-foreground">什么是集中度告警？</p>
+                  <p>当单一行业或个股占组合总市值超过阈值时触发。过度集中意味着该行业/个股波动将主导整个组合表现。</p>
+                  <p className="font-semibold text-foreground mt-2">应对建议：</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li><b>分散配置</b>：增配与现有持仓低相关性的行业（如科技+消费+医药组合）</li>
+                    <li><b>设置单行业上限</b>：建议单一行业不超过组合 30%，单只个股不超过 15%</li>
+                    <li><b>定期再平衡</b>：当偏离目标配比超过 5% 时执行再平衡</li>
+                    <li><b>关注相关性</b>：在市场压力下，看似不同的行业可能高度相关</li>
+                  </ul>
+                  <p className="text-secondary mt-2 italic">⚠️ 以上为一般性投资知识，不构成投资建议。</p>
+                </div>
+              }
+            />
+          </h2>
           {concentrationPieData.length > 0 ? (
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
@@ -1089,7 +1109,26 @@ const PortfolioPage: React.FC = () => {
 
       <section className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <Card padding="md">
-          <h3 className="text-sm font-semibold text-foreground mb-2">回撤监控</h3>
+          <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
+            回撤监控
+            <HelpTip
+              content={
+                <div className="space-y-2">
+                  <p className="font-semibold text-foreground">什么是回撤告警？</p>
+                  <p>最大回撤是组合从峰值到谷值的最大跌幅。当前回撤超过设定阈值时触发告警，说明组合正在经历较大亏损。</p>
+                  <p className="font-semibold text-foreground mt-2">应对建议：</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li><b>检查是系统性风险还是个股问题</b>：大盘大跌时不必恐慌，个股暴跌要格外警惕</li>
+                    <li><b>减少高波动仓位</b>：适当降低杠杆或高 Beta 持仓的比例</li>
+                    <li><b>检查流动性储备</b>：确保有 12-24 个月的现金/短债覆盖生活需要，避免被迫在低位卖出</li>
+                    <li><b>评估恢复周期</b>：回撤 20% 需要上涨 25% 才能回本，回撤 50% 需要翻倍</li>
+                    <li><b>重新审视资产配比</b>：如果频繁触发告警，可能需要降低权益比例</li>
+                  </ul>
+                  <p className="text-secondary mt-2 italic">⚠️ 以上为一般性投资知识，不构成投资建议。</p>
+                </div>
+              }
+            />
+          </h3>
           <div className="text-xs text-secondary space-y-1">
             <div>最大回撤: {formatPct(risk?.drawdown?.maxDrawdownPct)}</div>
             <div>当前回撤: {formatPct(risk?.drawdown?.currentDrawdownPct)}</div>
@@ -1097,7 +1136,28 @@ const PortfolioPage: React.FC = () => {
           </div>
         </Card>
         <Card padding="md">
-          <h3 className="text-sm font-semibold text-foreground mb-2">止损接近预警</h3>
+          <h3 className="text-sm font-semibold text-foreground mb-2 flex items-center gap-1.5">
+            止损接近预警
+            <HelpTip
+              content={
+                <div className="space-y-2">
+                  <p className="font-semibold text-foreground">什么是止损预警？</p>
+                  <p>当持仓亏损接近或已超过预设止损线时触发。"接近"表示还有缓冲空间，"已触发"表示已破止损位。</p>
+                  <p className="font-semibold text-foreground mt-2">应对建议：</p>
+                  <ul className="list-disc pl-4 space-y-1">
+                    <li><b>已触发止损</b>：严格执行纪律，按计划减仓或清仓。止损不是失败，是风险管理的成本</li>
+                    <li><b>接近止损</b>：不要提前手动干预，也不要心存侥幸移动止损位</li>
+                    <li><b>绝不向不利方向移动止损位</b>：这是交易纪律的底线</li>
+                    <li><b>复盘止损设置是否合理</b>：如果频繁被扫，可能需要用 ATR（平均真实波幅）动态调整止损距离</li>
+                    <li><b>控制单笔亏损</b>：建议单笔交易亏损不超过总资产的 2%</li>
+                  </ul>
+                  <p className="font-semibold text-foreground mt-2">专业建议：</p>
+                  <p>止损位只能朝有利方向移动（即"追踪止损"），绝不能因为不甘心而向下调整。如果一笔交易的逻辑已经被破坏，果断止损是最优选择。</p>
+                  <p className="text-secondary mt-2 italic">⚠️ 以上为一般性投资知识，不构成投资建议。</p>
+                </div>
+              }
+            />
+          </h3>
           <div className="text-xs text-secondary space-y-1">
             <div>触发数: {risk?.stopLoss?.triggeredCount ?? 0}</div>
             <div>接近数: {risk?.stopLoss?.nearCount ?? 0}</div>

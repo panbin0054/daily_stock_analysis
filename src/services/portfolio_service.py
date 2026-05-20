@@ -14,6 +14,7 @@ import requests
 
 from data_provider.base import canonical_stock_code, normalize_stock_code
 from src.config import get_config
+from src.data.stock_mapping import STOCK_NAME_MAP
 from src.repositories.portfolio_repo import (
     DuplicateTradeDedupHashError,
     DuplicateTradeUidError,
@@ -1033,6 +1034,7 @@ class PortfolioService:
             position_rows.append(
                 {
                     "symbol": symbol,
+                    "name": STOCK_NAME_MAP.get(symbol, ""),
                     "market": market,
                     "currency": currency,
                     "quantity": round(qty, 8),
