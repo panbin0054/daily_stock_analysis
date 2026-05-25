@@ -77,7 +77,6 @@ export const ScheduleCard: React.FC<ScheduleCardProps> = ({
   const [triggerError, setTriggerError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [needsRestart, setNeedsRestart] = useState(false);
   const [restarting, setRestarting] = useState(false);
 
   /* Draft state for daily analysis config */
@@ -169,7 +168,7 @@ export const ScheduleCard: React.FC<ScheduleCardProps> = ({
     setSaving(true);
     setSaveMessage(null);
     setSaveError(null);
-    setNeedsRestart(false);
+    setRestarting(false);
     try {
       let version = configVersion;
       if (!version) {
@@ -196,9 +195,12 @@ export const ScheduleCard: React.FC<ScheduleCardProps> = ({
         // SCHEDULE_TIME supports hot-reload, no restart needed
         setSaveMessage('执行时间已更新，将在下一轮调度中自动生效（约30秒内）');
       } else if (enabledChanged || runImmediatelyChanged) {
-        // These require a restart
-        setSaveMessage('配置已保存，需要重启服务后生效');
-        setNeedsRestart(true);
+        // These require a process restart. Do it automatically so the Web UI
+        // remains the only operational surface for scheduler changes.
+        setIsDirty(false);
+        if (onSaved) await onSaved();
+        await handleRestart('配置已保存，正在自动重启服务以应用定时任务设置...');
+        return;
       } else {
         setSaveMessage('定时任务配置已保存');
       }
@@ -216,13 +218,12 @@ export const ScheduleCard: React.FC<ScheduleCardProps> = ({
   };
 
   /* ---- Restart service ---- */
-  const handleRestart = async () => {
+  const handleRestart = async (message = '服务正在重启，请等待几秒后页面会自动刷新...') => {
     setRestarting(true);
     setSaveError(null);
     try {
       await apiClient.post('/api/v1/system/scheduler/restart');
-      setSaveMessage('服务正在重启，请等待几秒后页面会自动刷新...');
-      setNeedsRestart(false);
+      setSaveMessage(message);
       // Wait a few seconds then reload the page
       setTimeout(() => {
         window.location.reload();
@@ -395,18 +396,8 @@ export const ScheduleCard: React.FC<ScheduleCardProps> = ({
             <div className="rounded-xl border border-green-500/30 bg-green-500/10 px-4 py-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm text-green-400">{saveMessage}</p>
-                {needsRestart && (
-                  <Button
-                    type="button"
-                    variant="settings-primary"
-                    onClick={() => void handleRestart()}
-                    disabled={restarting}
-                    isLoading={restarting}
-                    loadingText="重启中..."
-                    className="shrink-0"
-                  >
-                    🔄 重启服务
-                  </Button>
+                {restarting && (
+                  <div className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-green-400/30 border-t-green-300" />
                 )}
               </div>
             </div>

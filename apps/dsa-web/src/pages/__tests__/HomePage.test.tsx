@@ -110,6 +110,9 @@ const marketReviewHistoryReport = {
     trendPrediction: '大盘复盘',
     sentimentScore: 50,
   },
+  details: {
+    newsContent: '# 大盘复盘正文\n\n指数放量普涨。',
+  },
 };
 
 describe('HomePage', () => {
@@ -630,12 +633,16 @@ describe('HomePage', () => {
       </MemoryRouter>,
     );
 
-    await screen.findByText('大盘复盘摘要');
+    await screen.findByTestId('market-review-history-content');
     const reanalyzeButton = screen.getByRole('button', { name: '重新分析' });
     const followUpButton = screen.getByRole('button', { name: '追问 AI' });
 
     expect(reanalyzeButton).toBeDisabled();
     expect(followUpButton).toBeDisabled();
+    expect(screen.getByTestId('market-review-history-content')).toHaveTextContent('大盘复盘正文');
+    expect(screen.queryByText('策略点位')).not.toBeInTheDocument();
+    expect(screen.queryByText('相关资讯')).not.toBeInTheDocument();
+    expect(screen.queryByText('数据追溯')).not.toBeInTheDocument();
 
     fireEvent.click(reanalyzeButton);
     fireEvent.click(followUpButton);

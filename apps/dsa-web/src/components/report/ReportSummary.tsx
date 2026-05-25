@@ -1,10 +1,14 @@
 import React from 'react';
+import Markdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { AnalysisResult, AnalysisReport } from '../../types/analysis';
 import { ReportOverview } from './ReportOverview';
 import { ReportStrategy } from './ReportStrategy';
 import { ReportNews } from './ReportNews';
 import { ReportDetails } from './ReportDetails';
 import { getReportText, normalizeReportLanguage } from '../../utils/reportLanguage';
+import { Card } from '../common';
+import { DashboardPanelHeader } from '../dashboard';
 
 interface ReportSummaryProps {
   data: AnalysisResult | AnalysisReport;
@@ -31,6 +35,54 @@ export const ReportSummary: React.FC<ReportSummaryProps> = ({
   const shouldShowModel = Boolean(
     modelUsed && !['unknown', 'error', 'none', 'null', 'n/a'].includes(modelUsed.toLowerCase()),
   );
+  const isMarketReview = meta.reportType === 'market_review';
+  const marketReviewContent = (details?.newsContent || summary.analysisSummary || '').trim();
+
+  if (isMarketReview) {
+    return (
+      <div className="space-y-5 pb-8 animate-fade-in">
+        <Card variant="bordered" padding="md" className="home-panel-card text-left">
+          <DashboardPanelHeader
+            eyebrow={meta.stockCode}
+            title={meta.stockName || text.fullReport}
+            className="mb-3"
+          />
+          {marketReviewContent ? (
+            <div
+              className="home-markdown-prose prose prose-invert prose-sm max-w-none
+                prose-headings:text-foreground prose-headings:font-semibold prose-headings:mt-4 prose-headings:mb-2
+                prose-h1:text-xl
+                prose-h2:text-lg
+                prose-h3:text-base
+                prose-p:leading-relaxed prose-p:mb-3 prose-p:last:mb-0
+                prose-strong:text-foreground prose-strong:font-semibold
+                prose-ul:my-2 prose-ol:my-2 prose-li:my-1
+                prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:before:content-none prose-code:after:content-none
+                prose-pre:border
+                prose-table:border-collapse
+                prose-hr:my-4
+                prose-a:no-underline hover:prose-a:underline
+                prose-blockquote:text-secondary-text
+                whitespace-pre-line break-words"
+              data-testid="market-review-history-content"
+            >
+              <Markdown remarkPlugins={[remarkGfm]}>
+                {marketReviewContent}
+              </Markdown>
+            </div>
+          ) : (
+            <p className="text-sm text-secondary-text">{text.noAnalysisSummary}</p>
+          )}
+        </Card>
+
+        {shouldShowModel && (
+          <p className="px-1 text-xs text-muted-text">
+            {text.analysisModel}: {modelUsed}
+          </p>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5 pb-8 animate-fade-in">
