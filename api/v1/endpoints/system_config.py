@@ -507,3 +507,160 @@ def get_system_config_schema(
                 "message": "Failed to load system configuration schema",
             },
         )
+
+
+# ============================================================
+# Scheduler status & manual trigger
+# ============================================================
+
+@router.get(
+    "/scheduler/status",
+    responses={
+        200: {"description": "Scheduler status"},
+        500: {"description": "Internal server error", "model": ErrorResponse},
+    },
+    summary="Get scheduler status",
+    description="Return the current scheduler configuration and runtime state.",
+)
+def get_scheduler_status():
+    """Return scheduler configuration and next run time."""
+    from src.config import get_config
+
+    config = get_config()
+    # Use config object which correctly reads from .env file,
+    # not os.getenv which only sees container environment variables.
+    schedule_enabled = config.schedule_enabled
+    schedule_time = config.schedule_time or "18:00"
+    run_immediately = config.schedule_run_immediately
+    stock_list = getattr(config, "stock_list", []) or []
+    stock_list = [s.strip() for s in stock_list if s.strip()]
+
+    # Try to get runtime scheduler state
+    next_run = None
+    last_run = None
+    is_running = False
+    try:
+        from src.core.runtime_state import runtime_state
+        scheduler_state = runtime_state.get("scheduler", {})
+        next_run = scheduler_state.get("next_run")
+        last_run = scheduler_state.get("last_run")
+        is_running = scheduler_state.get("is_running", False)
+    except Exception:
+        pass
+
+    return {
+        "enabled": schedule_enabled,
+        "schedule_time": schedule_time,
+        "run_immediately": run_immediately,
+        "stock_list": stock_list,
+        "next_run": next_run,
+        "last_run": last_run,
+        "is_running": is_running,
+    }
+
+
+@router.post(
+    "/scheduler/restart",
+    responses={
+        200: {"description": "Service restart initiated"},
+        500: {"description": "Restart failed", "model": ErrorResponse},
+    },
+    summary="Restart the service process",
+    description=(
+        "Gracefully restart the service process so that scheduler configuration "
+        "changes (SCHEDULE_ENABLED, SCHEDULE_RUN_IMMEDIATELY) take effect. "
+        "The process will exit and Docker/supervisor will restart it automatically."
+    ),
+)
+def restart_service():
+    """Initiate a graceful service restart.
+
+    This sends SIGTERM to the current process after a short delay,
+    allowing Docker's restart policy to bring it back with the new config.
+    """
+    import signal
+    import threading
+
+    def _delayed_shutdown():
+        import time
+        time.sleep(1)  # Give time for the HTTP response to be sent
+        logger.info("Service restart requested via API, sending SIGTERM...")
+        os.kill(os.getpid(), signal.SIGTERM)
+
+    thread = threading.Thread(target=_delayed_shutdown, daemon=True, name="service-restart")
+    thread.start()
+
+    return {
+        "status": "accepted",
+        "message": "服务正在重启，请稍候几秒后刷新页面",
+    }
+
+
+@router.post(
+    "/scheduler/trigger",
+    responses={
+        200: {"description": "Analysis triggered"},
+        409: {"description": "Analysis already running", "model": ErrorResponse},
+        500: {"description": "Trigger failed", "model": ErrorResponse},
+    },
+    summary="Manually trigger daily analysis",
+    description="Trigger a full daily analysis run (same as scheduled execution).",
+)
+def trigger_scheduled_analysis():
+    """Manually trigger the daily analysis task."""
+    import threading
+    from datetime import datetime as _dt
+
+    from src.core.runtime_state import runtime_state
+
+    scheduler_state = runtime_state.get("scheduler") or {}
+    if scheduler_state.get("is_running"):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "analysis_running",
+                "message": "分析任务正在执行中，请等待完成后再触发",
+            },
+        )
+
+    # Read current stock list from config
+    stock_list = os.getenv("STOCK_LIST", "").split(",")
+    stock_list = [s.strip() for s in stock_list if s.strip()]
+    if not stock_list:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "no_stock_list",
+                "message": "未配置自选股列表（STOCK_LIST），请先在基础设置中配置",
+            },
+        )
+
+    def _run():
+        from src.core.runtime_state import runtime_state as _rs
+        state = _rs.get("scheduler") or {}
+        state["is_running"] = True
+        state["trigger_time"] = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+        _rs.set("scheduler", state)
+        try:
+            from src.core.pipeline import StockAnalysisPipeline
+            from src.config import get_config
+
+            config = get_config()
+            config.refresh_stock_list()
+            codes = config.stock_list or stock_list
+
+            pipeline = StockAnalysisPipeline(config)
+            pipeline.run(codes)
+            logger.info("Manual trigger analysis completed for %d stocks", len(codes))
+        except Exception as exc:
+            logger.exception("Manual trigger analysis failed: %s", exc)
+        finally:
+            state = _rs.get("scheduler") or {}
+            state["is_running"] = False
+            state["last_run"] = _dt.now().strftime("%Y-%m-%d %H:%M:%S")
+            _rs.set("scheduler", state)
+
+    thread = threading.Thread(target=_run, daemon=True, name="manual-trigger-analysis")
+    thread.start()
+
+    return {"status": "accepted", "message": f"分析任务已触发，正在后台分析 {len(stock_list)} 只股票"}

@@ -205,7 +205,13 @@ export function useSystemConfig() {
       });
 
       const defaultCategory = sorted[0]?.schema?.category || 'base';
+      /* Virtual categories (e.g. "schedule") are managed by the front-end
+         only and have no backend config items.  Keep them selected when
+         refreshing server state so the user isn't unexpectedly navigated
+         away after saving. */
+      const VIRTUAL_CATEGORIES = new Set(['schedule']);
       setActiveCategory((current) => {
+        if (VIRTUAL_CATEGORIES.has(current)) return current;
         const exists = sorted.some((item) => item.schema?.category === current);
         return exists ? current : defaultCategory;
       });

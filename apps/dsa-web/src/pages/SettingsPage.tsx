@@ -10,6 +10,7 @@ import {
   IntelligentImport,
   LLMChannelEditor,
   NotificationTestPanel,
+  ScheduleCard,
   SettingsCategoryNav,
   SettingsAlert,
   SettingsField,
@@ -346,6 +347,9 @@ const SettingsPage: React.FC = () => {
   ]);
   const SYSTEM_HIDDEN_KEYS = new Set([
     'ADMIN_AUTH_ENABLED',
+    'SCHEDULE_ENABLED',
+    'SCHEDULE_TIME',
+    'SCHEDULE_RUN_IMMEDIATELY',
   ]);
   const AGENT_HIDDEN_KEYS = new Set<string>();
   const activeItems =
@@ -598,6 +602,13 @@ const SettingsPage: React.FC = () => {
 
           <section className="space-y-4">
             {activeCategory === 'system' ? <AuthSettingsCard /> : null}
+            {activeCategory === 'schedule' ? (
+              <ScheduleCard
+                configVersion={configVersion}
+                maskToken={maskToken}
+                onSaved={async () => { await refreshAfterExternalSave(['SCHEDULE_ENABLED', 'SCHEDULE_TIME', 'SCHEDULE_RUN_IMMEDIATELY']); }}
+              />
+            ) : null}
             {activeCategory === 'system' ? (
               <SettingsSectionCard
                 title="版本信息"
@@ -801,15 +812,18 @@ const SettingsPage: React.FC = () => {
                 />
               </SettingsPanelErrorBoundary>
             ) : null}
-            {shouldGuardActiveConfigPanel && activeItems.length ? (
-              <SettingsPanelErrorBoundary
-                title={activeConfigPanelErrorTitle}
-                resetKey={`${activeCategory}:${configVersion}`}
-                diagnosticHint={settingsPanelDiagnosticHint}
-              >
-                {activeConfigPanel}
-              </SettingsPanelErrorBoundary>
-            ) : activeConfigPanel}
+            {/* Virtual categories (e.g. schedule) have their own dedicated panel; skip the generic config panel for them. */}
+            {activeCategory !== 'schedule' ? (
+              shouldGuardActiveConfigPanel && activeItems.length ? (
+                <SettingsPanelErrorBoundary
+                  title={activeConfigPanelErrorTitle}
+                  resetKey={`${activeCategory}:${configVersion}`}
+                  diagnosticHint={settingsPanelDiagnosticHint}
+                >
+                  {activeConfigPanel}
+                </SettingsPanelErrorBoundary>
+              ) : activeConfigPanel
+            ) : null}
           </section>
         </div>
       )}
