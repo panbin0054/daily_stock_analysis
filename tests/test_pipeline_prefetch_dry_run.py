@@ -53,6 +53,24 @@ class TestPipelinePrefetchBehavior(unittest.TestCase):
             ["000001"], use_bulk=False
         )
 
+    def test_run_deduplicates_normalized_stock_codes(self):
+        pipeline = self._build_pipeline(process_result=None)
+        pipeline.db.has_today_data.return_value = True
+
+        pipeline.run(
+            stock_codes=["hk06082", "HK06082", "6082.HK"],
+            dry_run=True,
+            send_notification=False,
+        )
+
+        pipeline.fetcher_manager.prefetch_stock_names.assert_not_called()
+        pipeline.process_single_stock.assert_called_once()
+        self.assertEqual(
+            pipeline.process_single_stock.call_args.args[0],
+            "HK06082",
+        )
+        pipeline.db.has_today_data.assert_called_once()
+
     def test_run_dry_run_counts_existing_data_by_effective_trading_date(self):
         pipeline = self._build_pipeline(process_result=None)
         pipeline._resolve_resume_target_date = MagicMock(

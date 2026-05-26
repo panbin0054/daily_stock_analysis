@@ -1616,6 +1616,25 @@ class StockAnalysisPipeline:
             })
 
         return context
+
+    @staticmethod
+    def _deduplicate_stock_codes(stock_codes: List[str]) -> Tuple[List[str], List[str]]:
+        """Normalize and deduplicate stock codes while preserving first-seen order."""
+        unique_codes: List[str] = []
+        duplicate_codes: List[str] = []
+        seen: set[str] = set()
+
+        for raw_code in stock_codes:
+            code = normalize_stock_code(str(raw_code or "").strip()).upper()
+            if not code:
+                continue
+            if code in seen:
+                duplicate_codes.append(code)
+                continue
+            seen.add(code)
+            unique_codes.append(code)
+
+        return unique_codes, duplicate_codes
     
     def process_single_stock(
         self,
@@ -1732,6 +1751,13 @@ class StockAnalysisPipeline:
         if stock_codes is None:
             self.config.refresh_stock_list()
             stock_codes = self.config.stock_list
+
+        stock_codes, duplicate_codes = self._deduplicate_stock_codes(stock_codes)
+        if duplicate_codes:
+            logger.warning(
+                "检测到重复自选股代码，已自动去重，本次不会重复分析或重复推送: %s",
+                ", ".join(duplicate_codes),
+            )
         
         if not stock_codes:
             logger.error("未配置自选股列表，请在 .env 文件中设置 STOCK_LIST")
