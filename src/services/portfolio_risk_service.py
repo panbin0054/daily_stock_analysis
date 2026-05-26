@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -522,9 +523,21 @@ class PortfolioRiskService:
             }
 
         grouped: Dict[str, float] = {}
+        incomplete_dates: set[str] = set()
+        carried_forward_dates: set[str] = set()
+        last_valid_equity_by_account: Dict[int, float] = {}
         stale_flag = False
         for row in rows:
             key = row.snapshot_date.isoformat()
+            if self._snapshot_has_unpriced_positions(row):
+                account_key = int(row.account_id)
+                if account_key in last_valid_equity_by_account:
+                    grouped[key] = grouped.get(key, 0.0) + last_valid_equity_by_account[account_key]
+                    carried_forward_dates.add(key)
+                    stale_flag = stale_flag or bool(row.fx_stale)
+                else:
+                    incomplete_dates.add(key)
+                continue
             converted, stale, _ = self.portfolio_service.convert_amount(
                 amount=float(row.total_equity or 0.0),
                 from_currency=str(row.base_currency or "CNY"),
@@ -532,7 +545,11 @@ class PortfolioRiskService:
                 as_of_date=row.snapshot_date,
             )
             grouped[key] = grouped.get(key, 0.0) + converted
+            last_valid_equity_by_account[int(row.account_id)] = converted
             stale_flag = stale_flag or stale or bool(row.fx_stale)
+
+        for key in incomplete_dates:
+            grouped.pop(key, None)
 
         series: List[Tuple[str, float]] = sorted(grouped.items(), key=lambda item: item[0])
         peak = 0.0
@@ -549,11 +566,39 @@ class PortfolioRiskService:
 
         return {
             "series_points": len(series),
+            "skipped_points": len(incomplete_dates),
+            "carried_forward_points": len(carried_forward_dates),
             "max_drawdown_pct": round(max_drawdown, 4),
             "current_drawdown_pct": round(current_drawdown, 4),
             "alert": bool(max_drawdown >= threshold_pct),
             "fx_stale": stale_flag,
         }
+
+    @staticmethod
+    def _snapshot_has_unpriced_positions(row: Any) -> bool:
+        """Identify valuation snapshots where active holdings were priced as unavailable."""
+        if float(getattr(row, "total_market_value", 0.0) or 0.0) > 0:
+            return False
+        payload_text = getattr(row, "payload", None)
+        if not payload_text:
+            return False
+        try:
+            payload = json.loads(payload_text)
+        except (TypeError, ValueError):
+            return False
+        if not isinstance(payload, dict):
+            return False
+
+        positions = payload.get("positions")
+        if not isinstance(positions, list):
+            return False
+        for pos in positions:
+            if not isinstance(pos, dict):
+                continue
+            quantity = float(pos.get("quantity") or 0.0)
+            if quantity > 0 and pos.get("price_available") is False:
+                return True
+        return False
 
     @staticmethod
     def _build_stop_loss(snapshot: Dict[str, Any], thresholds: Dict[str, Any]) -> Dict[str, Any]:

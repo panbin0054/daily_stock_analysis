@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -417,6 +418,73 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertGreaterEqual(report["drawdown"]["series_points"], 2)
         self.assertGreater(report["drawdown"]["max_drawdown_pct"], 10.0)
         self.assertTrue(report["drawdown"]["alert"])
+
+    def test_risk_drawdown_carries_forward_unpriced_snapshots(self) -> None:
+        account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
+        aid = account["id"]
+
+        valid_payload = {
+            "positions": [
+                {
+                    "symbol": "600519",
+                    "quantity": 100.0,
+                    "price_available": True,
+                }
+            ]
+        }
+        invalid_payload = {
+            "positions": [
+                {
+                    "symbol": "600519",
+                    "quantity": 100.0,
+                    "price_available": False,
+                }
+            ]
+        }
+        self.service.repo.upsert_daily_snapshot(
+            account_id=aid,
+            snapshot_date=date(2026, 1, 1),
+            cost_method="fifo",
+            base_currency="CNY",
+            total_cash=0.0,
+            total_market_value=10000.0,
+            total_equity=10000.0,
+            unrealized_pnl=0.0,
+            realized_pnl=0.0,
+            fee_total=0.0,
+            tax_total=0.0,
+            fx_stale=False,
+            payload=json.dumps(valid_payload),
+        )
+        self.service.repo.upsert_daily_snapshot(
+            account_id=aid,
+            snapshot_date=date(2026, 1, 2),
+            cost_method="fifo",
+            base_currency="CNY",
+            total_cash=0.0,
+            total_market_value=0.0,
+            total_equity=0.0,
+            unrealized_pnl=0.0,
+            realized_pnl=0.0,
+            fee_total=0.0,
+            tax_total=0.0,
+            fx_stale=False,
+            payload=json.dumps(invalid_payload),
+        )
+
+        report = self.risk_service._build_drawdown(
+            account_id=aid,
+            as_of_date=date(2026, 1, 2),
+            cost_method="fifo",
+            threshold_pct=10.0,
+            lookback_days=365,
+        )
+
+        self.assertEqual(report["series_points"], 2)
+        self.assertEqual(report["skipped_points"], 0)
+        self.assertEqual(report["carried_forward_points"], 1)
+        self.assertEqual(report["max_drawdown_pct"], 0.0)
+        self.assertFalse(report["alert"])
 
     def test_concentration_uses_cny_normalized_exposure(self) -> None:
         cn_account = self.service.create_account(name="CN", broker="Demo", market="cn", base_currency="CNY")
