@@ -1014,6 +1014,40 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertIsInstance(errors[0], PortfolioConflictError)
         self.assertIn("Duplicate trade_uid", str(errors[0]))
 
+    def test_today_position_price_cache_expires_for_realtime_refresh(self) -> None:
+        today = date.today()
+        with patch.object(
+            PortfolioService,
+            "_fetch_realtime_position_price",
+            side_effect=[(10.0, "provider-a"), (12.0, "provider-b")],
+        ) as fetch_price:
+            with patch("src.services.portfolio_service.time.time", return_value=1000.0):
+                first = self.service._resolve_position_price(
+                    symbol="AAPL",
+                    market="us",
+                    as_of_date=today,
+                )
+            with patch("src.services.portfolio_service.time.time", return_value=1030.0):
+                cached = self.service._resolve_position_price(
+                    symbol="AAPL",
+                    market="us",
+                    as_of_date=today,
+                )
+            with patch("src.services.portfolio_service.time.time", return_value=1061.0):
+                refreshed = self.service._resolve_position_price(
+                    symbol="AAPL",
+                    market="us",
+                    as_of_date=today,
+                )
+
+        self.assertEqual(first.price, 10.0)
+        self.assertEqual(cached.price, 10.0)
+        self.assertEqual(refreshed.price, 12.0)
+        self.assertEqual(fetch_price.call_count, 2)
+
+    def test_position_name_falls_back_to_generated_stock_index(self) -> None:
+        self.assertEqual(PortfolioService._resolve_position_name("600160"), "巨化股份")
+
     def test_event_symbol_filters_match_legacy_prefixed_symbols(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]

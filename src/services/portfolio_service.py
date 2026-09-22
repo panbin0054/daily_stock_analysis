@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -14,7 +15,8 @@ import requests
 
 from data_provider.base import canonical_stock_code, normalize_stock_code
 from src.config import get_config
-from src.data.stock_mapping import STOCK_NAME_MAP
+from src.data.stock_index_loader import get_index_stock_name
+from src.data.stock_mapping import STOCK_NAME_MAP, is_meaningful_stock_name
 from src.repositories.portfolio_repo import (
     DuplicateTradeDedupHashError,
     DuplicateTradeUidError,
@@ -39,6 +41,7 @@ VALID_CASH_DIRECTIONS = {"in", "out"}
 VALID_CORPORATE_ACTIONS = {"cash_dividend", "split_adjustment"}
 PORTFOLIO_FX_REFRESH_DISABLED_REASON = "portfolio_fx_update_disabled"
 PORTFOLIO_AGGREGATE_CURRENCY = "CNY"
+PORTFOLIO_REALTIME_PRICE_CACHE_TTL_SECONDS = 60.0
 
 
 class PortfolioConflictError(Exception):
@@ -84,10 +87,16 @@ class _ResolvedPositionPrice:
     provider: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class _CachedPositionPrice:
+    value: _ResolvedPositionPrice
+    cached_at: float
+
+
 class PortfolioService:
     """Business logic for account CRUD, event writes, and snapshot replay."""
 
-    _resolved_price_cache: Dict[Tuple[str, str, str], _ResolvedPositionPrice] = {}
+    _resolved_price_cache: Dict[Tuple[str, str, str], _CachedPositionPrice] = {}
 
     def __init__(self, repo: Optional[PortfolioRepository] = None):
         self.repo = repo or PortfolioRepository()
@@ -1034,7 +1043,7 @@ class PortfolioService:
             position_rows.append(
                 {
                     "symbol": symbol,
-                    "name": STOCK_NAME_MAP.get(symbol, ""),
+                    "name": self._resolve_position_name(symbol),
                     "market": market,
                     "currency": currency,
                     "quantity": round(qty, 8),
@@ -1058,13 +1067,29 @@ class PortfolioService:
 
         return position_rows, lot_rows, market_value_base, total_cost_base, fx_stale
 
+    @staticmethod
+    def _resolve_position_name(symbol: str) -> str:
+        normalized_symbol = PortfolioService._normalize_symbol_for_position(symbol)
+        for candidate in (
+            STOCK_NAME_MAP.get(normalized_symbol),
+            get_index_stock_name(normalized_symbol),
+        ):
+            if is_meaningful_stock_name(candidate, normalized_symbol):
+                return str(candidate).strip()
+        return ""
+
     def _resolve_position_price(self, *, symbol: str, market: str, as_of_date: date) -> _ResolvedPositionPrice:
         today = date.today()
         cache_key = (self._normalize_symbol_for_position(symbol), (market or "").strip().lower(), as_of_date.isoformat())
 
         cached = self._resolved_price_cache.get(cache_key)
         if cached is not None:
-            return cached
+            if as_of_date != today:
+                return cached.value
+            cache_age = time.time() - cached.cached_at
+            if cache_age <= PORTFOLIO_REALTIME_PRICE_CACHE_TTL_SECONDS:
+                return cached.value
+            self._resolved_price_cache.pop(cache_key, None)
 
         is_cn_etf = self._is_cn_etf_position(symbol=symbol, market=market)
         normalized_market = (market or "").strip().lower()
@@ -1084,7 +1109,7 @@ class PortfolioService:
                         is_available=True,
                         provider=provider,
                     )
-                    self._resolved_price_cache[cache_key] = resolved
+                    self._cache_resolved_position_price(cache_key, resolved)
                     return resolved
             else:
                 realtime_price, provider = self._fetch_realtime_position_price(symbol)
@@ -1097,7 +1122,7 @@ class PortfolioService:
                         is_available=True,
                         provider=provider,
                     )
-                    self._resolved_price_cache[cache_key] = resolved
+                    self._cache_resolved_position_price(cache_key, resolved)
                     return resolved
                 if normalized_market in {"hk", "hongkong", "hong_kong"}:
                     realtime_price, provider = self._fetch_tencent_position_price(symbol=symbol, market=market)
@@ -1110,7 +1135,7 @@ class PortfolioService:
                             is_available=True,
                             provider=provider,
                         )
-                        self._resolved_price_cache[cache_key] = resolved
+                        self._cache_resolved_position_price(cache_key, resolved)
                         return resolved
 
         # Fallback to DB historical close price
@@ -1125,7 +1150,7 @@ class PortfolioService:
                     is_stale=close_date < as_of_date,
                     is_available=True,
                 )
-                self._resolved_price_cache[cache_key] = resolved
+                self._cache_resolved_position_price(cache_key, resolved)
                 return resolved
 
         return _ResolvedPositionPrice(
@@ -1134,6 +1159,17 @@ class PortfolioService:
             price_date=None,
             is_stale=True,
             is_available=False,
+        )
+
+    @classmethod
+    def _cache_resolved_position_price(
+        cls,
+        cache_key: Tuple[str, str, str],
+        resolved: _ResolvedPositionPrice,
+    ) -> None:
+        cls._resolved_price_cache[cache_key] = _CachedPositionPrice(
+            value=resolved,
+            cached_at=time.time(),
         )
 
     @staticmethod
