@@ -303,6 +303,8 @@ class PortfolioRiskService:
                 if not sector_name:
                     boards = self._fetch_belong_boards(symbol)
                     sector_name = self._pick_primary_board_name(boards)
+                if not sector_name and not self.portfolio_service._is_cn_etf_position(symbol=symbol, market=market):
+                    sector_name = self._fetch_baostock_industry(symbol)
             elif market in ("hk", "hongkong", "hong_kong"):
                 sector_name = self._fetch_hk_sector(symbol)
         except Exception as exc:
@@ -323,6 +325,27 @@ class PortfolioRiskService:
 
     _tushare_industry_cache: Optional[Dict[str, str]] = None
     _tushare_industry_retry_at: float = 0.0
+    _baostock_industry_cache: Dict[str, str] = {}
+
+    def _fetch_baostock_industry(self, symbol: str) -> Optional[str]:
+        if symbol in self._baostock_industry_cache:
+            return self._baostock_industry_cache[symbol]
+        try:
+            from data_provider.baostock_fetcher import BaostockFetcher
+
+            fetcher = BaostockFetcher()
+            with fetcher._baostock_session() as bs:
+                result = bs.query_stock_industry(code=fetcher._convert_stock_code(symbol))
+                if result.error_code == "0" and result.next():
+                    row = dict(zip(result.fields, result.get_row_data()))
+                    industry = str(row.get("industry") or "").strip()
+                    if industry:
+                        sector = f"证监会：{industry}"
+                        self._baostock_industry_cache[symbol] = sector
+                        return sector
+        except Exception as exc:
+            logger.warning("Baostock industry lookup failed for %s: %s", symbol, exc)
+        return None
 
     def _fetch_industry_from_tushare(self, symbol: str) -> Optional[str]:
         """Get industry from tushare stock_basic (A-shares, batch-cached)."""
