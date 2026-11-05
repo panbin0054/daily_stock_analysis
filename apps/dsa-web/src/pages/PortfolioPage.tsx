@@ -1727,20 +1727,21 @@ const PortfolioPage: React.FC = () => {
               className="border-none bg-transparent px-4 py-8 shadow-none"
             />
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-[860px] w-full text-sm">
-                <thead className="text-xs text-secondary border-b border-white/10">
+            <div className="overflow-x-auto rounded-lg border border-border/40">
+              <table aria-label={text.positionsTitle} className="w-full min-w-[1120px] text-sm">
+                <thead className="border-b border-border/60 bg-surface/60 text-xs text-secondary">
                   <tr>
-                    <th className="text-left py-2 pr-2">{text.account}</th>
-                    <th className="text-left py-2 pr-2">{text.code}</th>
-                    <th className="text-right py-2 pr-2">{text.quantity}</th>
-                    <th className="text-right py-2 pr-2">{text.avgCost}</th>
-                    <th className="text-right py-2 pr-2">{text.lastPrice}</th>
-                    <th className="text-right py-2 pr-2">{text.marketValue}</th>
-                    <th className="text-right py-2 pr-3">{text.unrealizedPnl}</th>
-                    <th className="text-right py-2 pr-3">{text.returnPct}</th>
-                    <th className="min-w-[9rem] text-right py-2 pr-3">{t('decisionSignals.portfolioColumn')}</th>
-                    <th className="w-20 text-right py-2">{text.action}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-left font-medium">{text.account}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-left font-medium">{text.code}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-left font-medium">{text.stockName}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right font-medium">{text.quantity}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right font-medium">{text.avgCost}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right font-medium">{text.lastPrice}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right font-medium">{text.marketValue}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right font-medium">{text.unrealizedPnl}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right font-medium">{text.returnPct}</th>
+                    <th scope="col" className="min-w-[11rem] whitespace-nowrap px-3 py-3 text-right font-medium">{t('decisionSignals.portfolioColumn')}</th>
+                    <th scope="col" className="whitespace-nowrap px-3 py-3 text-right font-medium">{text.action}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1749,21 +1750,21 @@ const PortfolioPage: React.FC = () => {
                     const analyzing = positionAnalysisLoadingKey === rowKey;
                     const signal = signalByPositionKey.get(rowKey);
                     return (
-                    <tr key={rowKey} className="border-b border-white/5">
-                      <td className="py-2 pr-2 text-secondary">{row.accountName}</td>
-                      <td className="py-2 pr-2 font-mono text-foreground">{row.symbol}</td>
-                      <td className="py-2 pr-2 text-foreground">{row.name || '--'}</td>
-                      <td className="py-2 pr-2 text-right">{row.quantity.toFixed(2)}</td>
-                      <td className="py-2 pr-2 text-right">{row.avgCost.toFixed(4)}</td>
-                      <td className="py-2 pr-2 text-right">
+                    <tr key={rowKey} className="border-b border-border/40 transition-colors last:border-0 hover:bg-hover/40">
+                      <td className="whitespace-nowrap px-3 py-3 text-secondary">{row.accountName}</td>
+                      <td className="whitespace-nowrap px-3 py-3 font-mono text-foreground">{row.symbol}</td>
+                      <td className="whitespace-nowrap px-3 py-3 font-medium text-foreground">{row.name || '--'}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{row.quantity.toFixed(2)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{row.avgCost.toFixed(4)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">
                         <div>{formatPositionPrice(row)}</div>
                         <div className={`text-[11px] ${hasPositionPrice(row) ? 'text-secondary' : 'text-warning'}`}>
                           {getPositionPriceLabel(row)}
                         </div>
                       </td>
-                      <td className="py-2 pr-2 text-right">{formatPositionMoney(row.marketValueBase, row)}</td>
+                      <td className="whitespace-nowrap px-3 py-3 text-right tabular-nums">{formatPositionMoney(row.marketValueBase, row)}</td>
                       <td
-                        className={`py-2 pr-3 text-right ${
+                        className={`whitespace-nowrap px-3 py-3 text-right tabular-nums ${
                           hasPositionPrice(row)
                             ? row.unrealizedPnlBase >= 0
                               ? 'text-success'
@@ -1774,7 +1775,7 @@ const PortfolioPage: React.FC = () => {
                         {formatPositionMoney(row.unrealizedPnlBase, row)}
                       </td>
                       <td
-                        className={`py-2 pr-3 text-right ${
+                        className={`whitespace-nowrap px-3 py-3 text-right tabular-nums ${
                           hasPositionPrice(row) && row.unrealizedPnlPct !== null && row.unrealizedPnlPct !== undefined
                             ? row.unrealizedPnlPct >= 0
                               ? 'text-success'
@@ -1784,10 +1785,10 @@ const PortfolioPage: React.FC = () => {
                       >
                         {formatSignedPct(row.unrealizedPnlPct)}
                       </td>
-                      <td className="py-2 pr-3 text-right align-top">
+                      <td className="px-3 py-3 text-right align-top">
                         <PortfolioSignalSummary item={signal} loading={portfolioSignalsLoading} />
                       </td>
-                      <td className="py-2 text-right">
+                      <td className="whitespace-nowrap px-3 py-3 text-right">
                         <button
                           type="button"
                           onClick={() => void handleAnalyzePosition(row)}

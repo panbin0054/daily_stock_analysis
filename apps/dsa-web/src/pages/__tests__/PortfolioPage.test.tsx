@@ -354,6 +354,23 @@ describe('PortfolioPage FX refresh', () => {
     expect(getRisk).toHaveBeenCalledWith({ accountId: undefined, costMethod: 'fifo', includeRealtime: true });
   });
 
+  it('aligns position names, returns and AI suggestions with their headers', async () => {
+    getSnapshot.mockResolvedValueOnce(makeSnapshot({
+      positions: [makePosition({ symbol: '600519', name: '贵州茅台', unrealizedPnlPct: 6.67 })],
+    }));
+    render(<PortfolioPage />);
+    await waitForInitialLoad();
+
+    const table = screen.getByRole('table', { name: '持仓明细' });
+    const headers = within(table).getAllByRole('columnheader').map((header) => header.textContent);
+    const row = within(table).getAllByRole('row')[1];
+    const cells = within(row).getAllByRole('cell');
+    expect(cells).toHaveLength(headers.length);
+    expect(cells[headers.indexOf('名称')]).toHaveTextContent('贵州茅台');
+    expect(cells[headers.indexOf('收益率')]).toHaveTextContent('+6.67%');
+    expect(cells[headers.indexOf('AI 建议')]).not.toHaveTextContent('+6.67%');
+  });
+
   it('renders stale FX status with a manual refresh button', async () => {
     render(<PortfolioPage />);
 

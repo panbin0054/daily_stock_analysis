@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [修复] 持仓明细补齐名称表头，并优化表格列对齐和横向滚动展示。
+
 - [改进] 简化 Web 导航，仅保留首页、持仓、创新高、告警、数据中心、用量、设置、主题和退出。
 
 - [修复] 恢复创新高页面的数据接口路由，修复请求返回 404。
