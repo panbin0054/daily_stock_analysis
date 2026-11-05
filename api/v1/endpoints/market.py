@@ -338,7 +338,7 @@ def _fetch_new_high_stocks(
     description="获取 A 股创新高股票列表。主数据源：同花顺（akshare），备用数据源：东方财富。",
 )
 async def get_new_high_stocks(
-    period: str = Query("history", description="周期: history(历史新高), 20d(20日新高), 60d(60日新高), 120d(120日新高)"),
+    period: str = Query("history", description="周期: history(历史新高), 20d(月新高), 60d(半年新高), 120d(一年新高)"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(50, ge=1, le=100, description="每页条数"),
     sort_by: str = Query("change_pct", description="排序字段: change_pct(涨跌幅), turnover_rate(换手率), price(最新价)"),

@@ -10,9 +10,9 @@ import type { NewHighPeriod, NewHighResponse, NewHighSortBy, SortOrder } from '.
 /** 周期选项 */
 const PERIOD_OPTIONS: { value: NewHighPeriod; label: string; description: string }[] = [
   { value: 'history', label: '历史新高', description: '创历史最高价' },
-  { value: '20d', label: '近20日新高', description: '创近20个交易日新高' },
-  { value: '60d', label: '近60日新高', description: '创近60个交易日新高' },
-  { value: '120d', label: '近120日新高', description: '创近120个交易日新高' },
+  { value: '20d', label: '月新高', description: '创月新高' },
+  { value: '60d', label: '半年新高', description: '创半年新高' },
+  { value: '120d', label: '一年新高', description: '创一年新高' },
 ];
 
 /** 排序选项 */
@@ -97,7 +97,7 @@ const NewHighsPage: React.FC = () => {
       <PageHeader
         eyebrow="Market · New Highs"
         title="创新高股票"
-        description="A 股市场创新高股票实时统计。数据来源：同花顺。"
+        description="A 股市场创新高股票统计。优先使用同花顺数据，备用来源为东方财富。"
         actions={
           <button
             type="button"

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [修复] 恢复创新高页面的数据接口路由，修复请求返回 404。
+- [修复] 创新高周期标签与同花顺数据源的月、半年、一年口径保持一致。
 - [修复] 持仓页面及风险数据恢复实时估值，避免港股缺少历史收盘价时市值显示为零。
 
 - [修复] 依赖锁定 `akshare<1.20.0`，避免上游目录与 HTTP 层重构导致 CI 与桌面打包失败；Python 3.10 新装限制 `litellm<1.98.0`，修复 `NotRequired` 导入错误
