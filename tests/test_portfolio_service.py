@@ -455,6 +455,14 @@ class PortfolioServiceTestCase(unittest.TestCase):
         self.assertTrue(pos["price_available"])
         self.assertEqual(mock_get.call_args.args[0], "https://qt.gtimg.cn/q=hk00700")
 
+    def test_realtime_hk_and_etf_quotes_prefer_tencent(self) -> None:
+        for symbol, market in (("00700", "hk"), ("515790", "cn")):
+            with self.subTest(symbol=symbol), patch.object(
+                PortfolioService, "_fetch_tencent_position_price", return_value=(12.5, "tencent")
+            ) as fetch:
+                self.assertEqual(PortfolioService._fetch_realtime_position_price(symbol), (12.5, "tencent"))
+                fetch.assert_called_once_with(symbol=symbol, market=market)
+
     def test_snapshot_fifo_vs_avg_on_partial_sell(self) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]

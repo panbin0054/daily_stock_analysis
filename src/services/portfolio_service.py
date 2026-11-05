@@ -1326,6 +1326,16 @@ class PortfolioService:
 
     @staticmethod
     def _fetch_realtime_position_price(symbol: str) -> Tuple[Optional[float], Optional[str]]:
+        normalized = PortfolioService._normalize_symbol_for_position(symbol)
+        market = "hk" if normalized.isdigit() and len(normalized) == 5 else "cn"
+        if market == "hk" or PortfolioService._is_cn_etf_position(symbol=normalized, market=market):
+            price, provider = PortfolioService._fetch_tencent_position_price(symbol=normalized, market=market)
+            if price is not None and price > 0:
+                return price, provider
+            if market == "cn":
+                price, provider = PortfolioService._fetch_cn_etf_position_price(normalized)
+                if price is not None and price > 0:
+                    return price, provider
         try:
             from data_provider.base import DataFetcherManager
 
