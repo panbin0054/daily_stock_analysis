@@ -1,7 +1,7 @@
 import type React from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Layers3, ShieldCheck } from 'lucide-react';
-import { Pie, PieChart, ResponsiveContainer, Tooltip, Legend, Cell } from 'recharts';
+import { Pie, PieChart, ResponsiveContainer, Tooltip, Cell } from 'recharts';
 import { decisionSignalsApi } from '../api/decisionSignals';
 import { historyApi } from '../api/history';
 import { portfolioApi } from '../api/portfolio';
@@ -1840,18 +1840,27 @@ const PortfolioPage: React.FC = () => {
             {concentrationMode === 'sector' ? text.sectorConcentration : text.positionConcentrationFallback}
           </h2>
           {concentrationPieData.length > 0 ? (
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={concentrationPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}>
-                    {concentrationPieData.map((entry, index) => (
-                      <Cell key={`cell-${entry.name}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip formatter={(value) => `${Number(value).toFixed(2)}%`} />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
+            <div>
+              <div className="h-52">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie data={concentrationPieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}>
+                      {concentrationPieData.map((entry, index) => (
+                        <Cell key={`cell-${entry.name}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => `${Number(value).toFixed(2)}%`} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <ul aria-label={concentrationMode === 'sector' ? text.sectorConcentration : text.positionConcentrationFallback} className="mx-auto mt-2 w-fit max-w-full space-y-1 text-xs text-secondary">
+                {concentrationPieData.map((entry, index) => (
+                  <li key={entry.name} className="flex items-start gap-2">
+                    <span aria-hidden="true" className="mt-1 h-2.5 w-2.5 shrink-0 rounded-sm" style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length] }} />
+                    <span className="break-words">{entry.name}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : (
             <EmptyState

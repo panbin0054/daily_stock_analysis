@@ -359,6 +359,24 @@ describe('PortfolioPage FX refresh', () => {
     expect(getRisk).toHaveBeenCalledWith({ accountId: undefined, costMethod: 'fifo', includeRealtime: true });
   });
 
+  it('renders each concentration legend entry on its own row', async () => {
+    getSnapshot.mockResolvedValueOnce(makeSnapshot({ fxStale: false, positions: [makePosition()] }));
+    getRisk.mockResolvedValueOnce(makeRisk({
+      sectorConcentration: {
+        totalMarketValue: 2000, topWeightPct: 60, alert: true,
+        topSectors: [
+          { sector: '互联网', marketValueBase: 1200, weightPct: 60, symbolCount: 1, isAlert: true },
+          { sector: '半导体', marketValueBase: 800, weightPct: 40, symbolCount: 1, isAlert: true },
+        ],
+        coverage: { classifiedCount: 2, unclassifiedCount: 0, failedCount: 0 }, errors: [],
+      },
+    }));
+    render(<PortfolioPage />);
+    const legend = await screen.findByRole('list', { name: '行业集中度分布' });
+    expect(legend).toHaveClass('text-xs');
+    expect(within(legend).getAllByRole('listitem').map((item) => item.textContent)).toEqual(['互联网', '半导体']);
+  });
+
   it('aligns position names, returns and AI suggestions with their headers', async () => {
     getSnapshot.mockResolvedValueOnce(makeSnapshot({
       positions: [makePosition({ symbol: '600519', name: '贵州茅台', unrealizedPnlPct: 6.67 })],
