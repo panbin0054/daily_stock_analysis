@@ -2603,7 +2603,9 @@ class NotificationService(
             return self.send_to_dingtalk(sanitized_content)
         if channel == NotificationChannel.TELEGRAM:
             if use_image:
-                return self._send_telegram_photo(image_bytes)
+                if self._send_telegram_photo(image_bytes):
+                    return True
+                logger.warning("Telegram 图片发送失败，回退为文本")
             return self.send_to_telegram(content)
         if channel == NotificationChannel.EMAIL:
             receivers = None

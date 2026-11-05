@@ -4086,7 +4086,9 @@ class StockAnalysisPipeline:
                                 channel, image_bytes
                             )
                             if use_image:
-                                return self.notifier._send_telegram_photo(image_bytes)
+                                if self.notifier._send_telegram_photo(image_bytes):
+                                    return True
+                                logger.warning("Telegram 图片发送失败，回退为文本")
                             return self.notifier.send_to_telegram(report)
 
                         channel_success, channel_error = _send_channel_safely(

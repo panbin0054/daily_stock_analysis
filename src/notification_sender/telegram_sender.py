@@ -7,6 +7,7 @@ Telegram 发送提醒服务
 2. 通过 Telegram Bot API 发送 图片消息
 """
 import logging
+from io import BytesIO
 from typing import Optional
 import requests
 import time
@@ -343,18 +344,34 @@ class TelegramSender:
         return all_success
 
     def _send_telegram_photo(self, image_bytes: bytes) -> bool:
-        """Send image via Telegram sendPhoto API (Issue #289)."""
+        """Send one report image, using a document when photo limits are exceeded."""
         if not self._is_telegram_configured():
             return False
         bot_token = self._telegram_config['bot_token']
         chat_id = self._telegram_config['chat_id']
         message_thread_id = self._telegram_config.get('message_thread_id')
-        api_url = f"https://api.telegram.org/bot{bot_token}/sendPhoto"
         try:
+            from PIL import Image
+
+            with Image.open(BytesIO(image_bytes)) as image:
+                width, height = image.size
+                original_format = image.format
+                output = BytesIO()
+                image.save(output, format="PNG", optimize=True)
+                optimized = output.getvalue()
+            payload = optimized if original_format != "PNG" or len(optimized) < len(image_bytes) else image_bytes
+            use_document = (len(payload) > 10_000_000 or width + height > 10_000
+                            or max(width, height) > 20 * min(width, height))
+            if len(payload) > 50_000_000:
+                logger.warning("Telegram report image exceeds the 50 MB document limit")
+                return False
+            method = "sendDocument" if use_document else "sendPhoto"
+            field = "document" if use_document else "photo"
+            api_url = f"https://api.telegram.org/bot{bot_token}/{method}"
             data = {"chat_id": chat_id}
             if message_thread_id:
                 data['message_thread_id'] = message_thread_id
-            files = {"photo": ("report.png", image_bytes, "image/png")}
+            files = {field: ("report.png", payload, "image/png")}
             response = requests.post(api_url, data=data, files=files, timeout=30)
             if response.status_code == 200 and response.json().get('ok'):
                 logger.info("Telegram 图片发送成功")

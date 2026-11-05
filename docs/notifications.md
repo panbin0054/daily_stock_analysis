@@ -124,6 +124,7 @@ Discord 长报告发送复用现有分片链路：单条 `content` 运行时不�
 - 结构化字段、缺失值行为、个股/大盘映射和本地预览示例见 [分享图片模板与数据填充](share-images.md)。
 - `wkhtmltoimage`、`markdown-to-file` 与 `playwright` 使用同一份海报 HTML；现有 `MD2IMG_ENGINE`、`MARKDOWN_TO_IMAGE_MAX_CHARS` 和转换失败后回退文本的行为不变。Playwright 模式需先安装 Web 依赖并执行 `npx playwright install chromium`。
 - 模板按正文长度生成长图，不会为适配固定画幅而截断报告。内容超过 `MARKDOWN_TO_IMAGE_MAX_CHARS` 时仍跳过转图。
+- Telegram 图片会先进行无损 PNG 压缩；符合 Telegram 图片限制时以图片发送，超长图片则以单个 PNG 文件发送，保留原始分辨率。文件仍须符合 Telegram 的 50 MB 上限；转换或图片发送失败时回退到文本。
 - GitHub Actions 默认仍不映射 `MARKDOWN_TO_IMAGE_CHANNELS`；如需在 fork 的工作流中启用，应显式补充环境变量映射并安装所选转图工具。
 
 ## CLI 诊断
