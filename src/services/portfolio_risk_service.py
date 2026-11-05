@@ -239,6 +239,7 @@ class PortfolioRiskService:
                 sector = self._resolve_primary_sector(
                     symbol=symbol,
                     market=market,
+                    name=str(pos.get("name") or ""),
                     board_cache=board_cache,
                     coverage=coverage,
                     errors=errors,
@@ -275,6 +276,7 @@ class PortfolioRiskService:
         *,
         symbol: str,
         market: str,
+        name: str,
         board_cache: Dict[Tuple[str, str], str],
         coverage: Dict[str, int],
         errors: List[str],
@@ -288,6 +290,8 @@ class PortfolioRiskService:
             if market == "cn":
                 # 1. tushare stock_basic industry (best for A-shares)
                 sector_name = self._fetch_industry_from_tushare(symbol)
+                if not sector_name and self.portfolio_service._is_cn_etf_position(symbol=symbol, market=market):
+                    sector_name = self._infer_etf_sector(name)
                 # 2. ETF: tushare fund_basic name → infer sector
                 if not sector_name:
                     sector_name = self._fetch_etf_sector(symbol)
@@ -373,6 +377,13 @@ class PortfolioRiskService:
             PortfolioRiskService._tushare_etf_cache = self._load_tushare_etf_map()
         return PortfolioRiskService._tushare_etf_cache.get(symbol)
 
+    @classmethod
+    def _infer_etf_sector(cls, name: str) -> Optional[str]:
+        for keyword, sector in cls._ETF_SECTOR_KEYWORDS:
+            if keyword in name:
+                return sector
+        return None
+
     def _load_tushare_etf_map(self) -> Dict[str, str]:
         """Load ETF sector mapping from tushare fund_basic."""
         try:
@@ -393,10 +404,9 @@ class PortfolioRiskService:
                 if not ts_code or not name:
                     continue
                 code = ts_code.split(".")[0]
-                for keyword, sector in self._ETF_SECTOR_KEYWORDS:
-                    if keyword in name:
-                        result[code] = sector
-                        break
+                sector = self._infer_etf_sector(name)
+                if sector:
+                    result[code] = sector
             return result
         except Exception:
             return {}
