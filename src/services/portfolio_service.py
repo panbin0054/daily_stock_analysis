@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
@@ -34,7 +35,8 @@ except Exception:  # pragma: no cover - optional dependency path
     yf = None
 
 EPS = 1e-8
-VALID_MARKETS = {"cn", "hk", "us"}
+VALID_MARKETS = {"cn", "hk", "us", "jp", "kr", "tw"}
+PARTIAL_VALUATION_MARKETS = {"jp", "kr", "tw"}
 VALID_COST_METHODS = {"fifo", "avg"}
 VALID_SIDES = {"buy", "sell"}
 VALID_CASH_DIRECTIONS = {"in", "out"}
@@ -42,6 +44,30 @@ VALID_CORPORATE_ACTIONS = {"cash_dividend", "split_adjustment"}
 PORTFOLIO_FX_REFRESH_DISABLED_REASON = "portfolio_fx_update_disabled"
 PORTFOLIO_AGGREGATE_CURRENCY = "CNY"
 PORTFOLIO_REALTIME_PRICE_CACHE_TTL_SECONDS = 60.0
+PORTFOLIO_REALTIME_QUOTE_MAX_WORKERS = 4
+
+
+def _portfolio_limitations_for_market(market: str) -> List[str]:
+    """Return explicit snapshot limitations for markets with partial valuation semantics."""
+
+    if market not in PARTIAL_VALUATION_MARKETS:
+        return []
+    return [
+        "realtime_quote_best_effort",
+        "fx_and_cost_basis_partial",
+        "sector_and_risk_metrics_limited",
+    ]
+
+
+def _merge_portfolio_limitations(*groups: Iterable[str]) -> List[str]:
+    merged: List[str] = []
+    seen: Set[str] = set()
+    for group in groups:
+        for item in group:
+            if item and item not in seen:
+                seen.add(item)
+                merged.append(item)
+    return merged
 
 
 class PortfolioConflictError(Exception):
@@ -463,7 +489,10 @@ class PortfolioService:
         account_id: Optional[int] = None,
         as_of: Optional[date] = None,
         cost_method: str = "fifo",
+        include_realtime: bool = True,
+        read_only: bool = False,
     ) -> Dict[str, Any]:
+        """Replay holdings; read-only callers skip live quotes and snapshot writes."""
         as_of_date = as_of or date.today()
         method = self._normalize_cost_method(cost_method)
 
@@ -484,31 +513,42 @@ class PortfolioService:
             "fee_total": 0.0,
             "tax_total": 0.0,
             "fx_stale": False,
+            "limitations": [],
         }
 
         for account in account_rows:
-            account_snapshot = self._replay_account(account=account, as_of_date=as_of_date, cost_method=method)
-
-            self.repo.replace_positions_lots_and_snapshot(
-                account_id=account.id,
-                snapshot_date=as_of_date,
+            account_snapshot = self._replay_account(
+                account=account,
+                as_of_date=as_of_date,
                 cost_method=method,
-                base_currency=account.base_currency,
-                total_cash=account_snapshot["total_cash"],
-                total_market_value=account_snapshot["total_market_value"],
-                total_equity=account_snapshot["total_equity"],
-                unrealized_pnl=account_snapshot["unrealized_pnl"],
-                realized_pnl=account_snapshot["realized_pnl"],
-                fee_total=account_snapshot["fee_total"],
-                tax_total=account_snapshot["tax_total"],
-                fx_stale=account_snapshot["fx_stale"],
-                payload=json.dumps(account_snapshot["payload"], ensure_ascii=False),
-                positions=account_snapshot["positions_cache"],
-                lots=account_snapshot["lots_cache"],
-                valuation_currency=account.base_currency,
+                include_realtime=include_realtime and not read_only,
             )
 
+            if not read_only:
+                self.repo.replace_positions_lots_and_snapshot(
+                    account_id=account.id,
+                    snapshot_date=as_of_date,
+                    cost_method=method,
+                    base_currency=account.base_currency,
+                    total_cash=account_snapshot["total_cash"],
+                    total_market_value=account_snapshot["total_market_value"],
+                    total_equity=account_snapshot["total_equity"],
+                    unrealized_pnl=account_snapshot["unrealized_pnl"],
+                    realized_pnl=account_snapshot["realized_pnl"],
+                    fee_total=account_snapshot["fee_total"],
+                    tax_total=account_snapshot["tax_total"],
+                    fx_stale=account_snapshot["fx_stale"],
+                    payload=json.dumps(account_snapshot["payload"], ensure_ascii=False),
+                    positions=account_snapshot["positions_cache"],
+                    lots=account_snapshot["lots_cache"],
+                    valuation_currency=account.base_currency,
+                )
+
             accounts_payload.append(account_snapshot["public"])
+            aggregate["limitations"] = _merge_portfolio_limitations(
+                aggregate["limitations"],
+                account_snapshot["public"].get("limitations", []),
+            )
 
             cash_cny, stale_cash, _ = self._convert_amount(
                 amount=account_snapshot["total_cash"],
@@ -522,6 +562,7 @@ class PortfolioService:
                 to_currency=aggregate_currency,
                 as_of_date=as_of_date,
             )
+            account_snapshot["public"]["total_market_value_aggregate"] = round(mv_cny, 6)
             eq_cny, stale_eq, _ = self._convert_amount(
                 amount=account_snapshot["total_equity"],
                 from_currency=account.base_currency,
@@ -585,6 +626,8 @@ class PortfolioService:
             "fee_total": round(aggregate["fee_total"], 6),
             "tax_total": round(aggregate["tax_total"], 6),
             "fx_stale": aggregate["fx_stale"],
+            "data_quality": "partial" if aggregate["limitations"] else "ok",
+            "limitations": aggregate["limitations"],
             "accounts": accounts_payload,
         }
 
@@ -750,7 +793,14 @@ class PortfolioService:
 
         return quantity_held
 
-    def _replay_account(self, *, account: Any, as_of_date: date, cost_method: str) -> Dict[str, Any]:
+    def _replay_account(
+        self,
+        *,
+        account: Any,
+        as_of_date: date,
+        cost_method: str,
+        include_realtime: bool,
+    ) -> Dict[str, Any]:
         trades = self.repo.list_trades(account.id, as_of=as_of_date)
         cash_ledger = self.repo.list_cash_ledger(account.id, as_of=as_of_date)
         corporate_actions = self.repo.list_corporate_actions(account.id, as_of=as_of_date)
@@ -909,6 +959,7 @@ class PortfolioService:
             cost_method=cost_method,
             fifo_lots=fifo_lots,
             avg_state=avg_state,
+            include_realtime=include_realtime,
         )
         fx_stale = fx_stale or stale_pos
 
@@ -925,6 +976,15 @@ class PortfolioService:
 
         unrealized_pnl_base = market_value_base - total_cost_base
         total_equity_base = total_cash_base + market_value_base
+        position_limitations = [
+            limitation
+            for position in position_rows
+            for limitation in position.get("limitations", [])
+        ]
+        limitations = _merge_portfolio_limitations(
+            _portfolio_limitations_for_market(account.market),
+            position_limitations,
+        )
 
         account_payload = {
             "account_id": account.id,
@@ -943,6 +1003,8 @@ class PortfolioService:
             "fee_total": round(fees_total_base, 6),
             "tax_total": round(taxes_total_base, 6),
             "fx_stale": fx_stale,
+            "data_quality": "partial" if limitations else "ok",
+            "limitations": limitations,
             "positions": position_rows,
         }
 
@@ -969,6 +1031,7 @@ class PortfolioService:
         cost_method: str,
         fifo_lots: Dict[Tuple[str, str, str], List[Dict[str, Any]]],
         avg_state: Dict[Tuple[str, str, str], _AvgState],
+        include_realtime: bool = True,
     ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], float, float, bool]:
         position_rows: List[Dict[str, Any]] = []
         lot_rows: List[Dict[str, Any]] = []
@@ -981,6 +1044,26 @@ class PortfolioService:
             keys = list(fifo_lots.keys())
         else:
             keys = list(avg_state.keys())
+
+        active_symbols: List[str] = []
+        if include_realtime and as_of_date == date.today():
+            for key in sorted(keys):
+                symbol, _, _ = key
+                if cost_method == "fifo":
+                    qty = sum(
+                        float(lot["remaining_quantity"])
+                        for lot in fifo_lots[key]
+                        if lot["remaining_quantity"] > EPS
+                    )
+                else:
+                    qty = float(avg_state[key].quantity)
+                if qty > EPS:
+                    active_symbols.append(symbol)
+        realtime_prices = (
+            self._prefetch_realtime_position_prices(active_symbols)
+            if active_symbols
+            else None
+        )
 
         for key in sorted(keys):
             symbol, market, currency = key
@@ -1012,8 +1095,15 @@ class PortfolioService:
                     }
                 )
 
-            price_info = self._resolve_position_price(symbol=symbol, market=market, as_of_date=as_of_date)
+            price_info = self._resolve_position_price(
+                symbol=symbol,
+                market=market,
+                as_of_date=as_of_date,
+                realtime_prices=realtime_prices,
+                include_realtime=include_realtime,
+            )
             last_price = price_info.price
+            limitations = _portfolio_limitations_for_market(market)
 
             if price_info.is_available:
                 local_market_value = qty * float(last_price)
@@ -1059,6 +1149,8 @@ class PortfolioService:
                     "price_date": price_info.price_date.isoformat() if price_info.price_date else None,
                     "price_stale": price_info.is_stale,
                     "price_available": price_info.is_available,
+                    "data_quality": "partial" if limitations else "ok",
+                    "limitations": limitations,
                 }
             )
 
@@ -1070,88 +1162,67 @@ class PortfolioService:
     @staticmethod
     def _resolve_position_name(symbol: str) -> str:
         normalized_symbol = PortfolioService._normalize_symbol_for_position(symbol)
-        for candidate in (
-            STOCK_NAME_MAP.get(normalized_symbol),
-            get_index_stock_name(normalized_symbol),
-        ):
+        for candidate in (STOCK_NAME_MAP.get(normalized_symbol), get_index_stock_name(normalized_symbol)):
             if is_meaningful_stock_name(candidate, normalized_symbol):
                 return str(candidate).strip()
         return ""
 
-    def _resolve_position_price(self, *, symbol: str, market: str, as_of_date: date) -> _ResolvedPositionPrice:
+    @staticmethod
+    def _is_cn_etf_position(*, symbol: str, market: str) -> bool:
+        normalized_symbol = PortfolioService._normalize_symbol_for_position(symbol)
+        return ((market or "").strip().lower() == "cn" and normalized_symbol.isdigit()
+                and len(normalized_symbol) == 6 and normalized_symbol.startswith(("51", "52", "56", "58", "15", "16", "18")))
+
+    def _resolve_position_price(
+        self,
+        *,
+        symbol: str,
+        market: str,
+        as_of_date: date,
+        realtime_prices: Optional[Dict[str, Tuple[Optional[float], Optional[str]]]] = None,
+        include_realtime: bool = True,
+    ) -> _ResolvedPositionPrice:
         today = date.today()
-        cache_key = (self._normalize_symbol_for_position(symbol), (market or "").strip().lower(), as_of_date.isoformat())
+        cache_key = (self._normalize_symbol_for_position(symbol), market.lower(), as_of_date.isoformat())
+        use_cache = include_realtime and realtime_prices is None
+        cached = self._resolved_price_cache.get(cache_key) if use_cache else None
+        if cached and (as_of_date != today or time.monotonic() - cached.cached_at <= PORTFOLIO_REALTIME_PRICE_CACHE_TTL_SECONDS):
+            return cached.value
 
-        cached = self._resolved_price_cache.get(cache_key)
-        if cached is not None:
-            if as_of_date != today:
-                return cached.value
-            cache_age = time.time() - cached.cached_at
-            if cache_age <= PORTFOLIO_REALTIME_PRICE_CACHE_TTL_SECONDS:
-                return cached.value
-            self._resolved_price_cache.pop(cache_key, None)
-
-        is_cn_etf = self._is_cn_etf_position(symbol=symbol, market=market)
-        normalized_market = (market or "").strip().lower()
-
-        # When as_of_date is today, prioritize realtime quotes over stale DB close prices
-        if as_of_date == today:
-            if is_cn_etf:
-                realtime_price, provider = self._fetch_tencent_position_price(symbol=symbol, market=market)
-                if realtime_price is None or realtime_price <= 0:
-                    realtime_price, provider = self._fetch_cn_etf_position_price(symbol)
-                if realtime_price is not None and realtime_price > 0:
-                    resolved = _ResolvedPositionPrice(
-                        price=float(realtime_price),
-                        source="realtime_quote",
-                        price_date=today,
-                        is_stale=False,
-                        is_available=True,
-                        provider=provider,
-                    )
-                    self._cache_resolved_position_price(cache_key, resolved)
-                    return resolved
-            else:
+        if include_realtime and as_of_date == today:
+            if realtime_prices is None:
                 realtime_price, provider = self._fetch_realtime_position_price(symbol)
-                if realtime_price is not None and realtime_price > 0:
-                    resolved = _ResolvedPositionPrice(
-                        price=float(realtime_price),
-                        source="realtime_quote",
-                        price_date=today,
-                        is_stale=False,
-                        is_available=True,
-                        provider=provider,
-                    )
-                    self._cache_resolved_position_price(cache_key, resolved)
-                    return resolved
-                if normalized_market in {"hk", "hongkong", "hong_kong"}:
+            else:
+                realtime_price, provider = realtime_prices.get(symbol, (None, None))
+            if realtime_price is None or realtime_price <= 0:
+                if market.lower() in {"hk", "hongkong", "hong_kong"} or self._is_cn_etf_position(symbol=symbol, market=market):
                     realtime_price, provider = self._fetch_tencent_position_price(symbol=symbol, market=market)
-                    if realtime_price is not None and realtime_price > 0:
-                        resolved = _ResolvedPositionPrice(
-                            price=float(realtime_price),
-                            source="realtime_quote",
-                            price_date=today,
-                            is_stale=False,
-                            is_available=True,
-                            provider=provider,
-                        )
-                        self._cache_resolved_position_price(cache_key, resolved)
-                        return resolved
+                if (realtime_price is None or realtime_price <= 0) and self._is_cn_etf_position(symbol=symbol, market=market):
+                    realtime_price, provider = self._fetch_cn_etf_position_price(symbol)
+            if realtime_price is not None and realtime_price > 0:
+                result = _ResolvedPositionPrice(
+                    price=float(realtime_price),
+                    source="realtime_quote",
+                    price_date=today,
+                    is_stale=False,
+                    is_available=True,
+                    provider=provider,
+                )
+                if use_cache:
+                    self._resolved_price_cache[cache_key] = _CachedPositionPrice(result, time.monotonic())
+                return result
 
-        # Fallback to DB historical close price
         close = self.repo.get_latest_close_with_date(symbol=symbol, as_of=as_of_date)
         if close is not None:
             close_price, close_date = close
             if close_price > 0:
-                resolved = _ResolvedPositionPrice(
+                return _ResolvedPositionPrice(
                     price=float(close_price),
                     source="history_close",
                     price_date=close_date,
                     is_stale=close_date < as_of_date,
                     is_available=True,
                 )
-                self._cache_resolved_position_price(cache_key, resolved)
-                return resolved
 
         return _ResolvedPositionPrice(
             price=0.0,
@@ -1159,28 +1230,6 @@ class PortfolioService:
             price_date=None,
             is_stale=True,
             is_available=False,
-        )
-
-    @classmethod
-    def _cache_resolved_position_price(
-        cls,
-        cache_key: Tuple[str, str, str],
-        resolved: _ResolvedPositionPrice,
-    ) -> None:
-        cls._resolved_price_cache[cache_key] = _CachedPositionPrice(
-            value=resolved,
-            cached_at=time.time(),
-        )
-
-    @staticmethod
-    def _is_cn_etf_position(*, symbol: str, market: str) -> bool:
-        normalized_market = (market or "").strip().lower()
-        normalized_symbol = PortfolioService._normalize_symbol_for_position(symbol)
-        return (
-            normalized_market == "cn"
-            and normalized_symbol.isdigit()
-            and len(normalized_symbol) == 6
-            and normalized_symbol.startswith(("51", "52", "56", "58", "15", "16", "18"))
         )
 
     @staticmethod
@@ -1234,12 +1283,54 @@ class PortfolioService:
             return None, None
         return price, "tencent"
 
+    def _prefetch_realtime_position_prices(
+        self,
+        symbols: Iterable[str],
+    ) -> Dict[str, Tuple[Optional[float], Optional[str]]]:
+        unique_symbols = sorted({symbol for symbol in symbols if symbol})
+        if not unique_symbols:
+            return {}
+
+        # Bulk prefetch (when applicable) only warms the fetcher-module-level realtime cache;
+        # the manager itself is discarded so per-symbol workers cannot serialize through its
+        # per-fetcher call locks when individual reads still need a live fetch (e.g. mixed
+        # markets, cache miss, or bulk source returning fewer rows than requested).
+        if len(unique_symbols) >= 5:
+            try:
+                from data_provider.base import DataFetcherManager
+
+                DataFetcherManager().prefetch_realtime_quotes(unique_symbols)
+            except Exception as exc:
+                logger.warning("Failed to prefetch realtime portfolio quotes: %s", exc)
+
+        if len(unique_symbols) == 1:
+            symbol = unique_symbols[0]
+            return {symbol: self._fetch_realtime_position_price(symbol)}
+
+        results: Dict[str, Tuple[Optional[float], Optional[str]]] = {}
+        max_workers = min(PORTFOLIO_REALTIME_QUOTE_MAX_WORKERS, len(unique_symbols))
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="portfolio-quote") as executor:
+            futures = {
+                executor.submit(self._fetch_realtime_position_price, symbol): symbol
+                for symbol in unique_symbols
+            }
+            for future in as_completed(futures):
+                symbol = futures[future]
+                try:
+                    results[symbol] = future.result()
+                except Exception as exc:  # pragma: no cover - defensive guard for patched fetchers
+                    logger.warning("Failed to prefetch realtime portfolio price for %s: %s", symbol, exc)
+                    results[symbol] = (None, None)
+
+        return results
+
     @staticmethod
     def _fetch_realtime_position_price(symbol: str) -> Tuple[Optional[float], Optional[str]]:
         try:
             from data_provider.base import DataFetcherManager
 
-            quote = DataFetcherManager().get_realtime_quote(symbol, log_final_failure=False)
+            fetcher_manager = DataFetcherManager()
+            quote = fetcher_manager.get_realtime_quote(symbol, log_final_failure=False)
         except Exception as exc:
             logger.warning("Failed to fetch realtime portfolio price for %s: %s", symbol, exc)
             return None, None
@@ -1774,7 +1865,7 @@ class PortfolioService:
     def _normalize_market(value: str) -> str:
         market = (value or "").strip().lower()
         if market not in VALID_MARKETS:
-            raise ValueError("market must be one of: cn, hk, us")
+            raise ValueError("market must be one of: cn, hk, us, jp, kr, tw")
         return market
 
     @staticmethod

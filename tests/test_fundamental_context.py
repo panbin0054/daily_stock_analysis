@@ -39,26 +39,143 @@ class _DummyBoardFetcher:
 
 
 class TestFundamentalContext(unittest.TestCase):
-    def test_non_cn_market_returns_not_supported(self) -> None:
+    def test_not_supported_builder_uses_existing_fundamental_schema(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+
+        context = manager.build_not_supported_fundamental_context(
+            "sh000016", "index target: fundamental modules skipped"
+        )
+
+        self.assertEqual(context["status"], "not_supported")
+        self.assertTrue(context["coverage"])
+        self.assertTrue(
+            all(status == "not_supported" for status in context["coverage"].values())
+        )
+        self.assertEqual(
+            context["errors"], ["index target: fundamental modules skipped"]
+        )
+
+    def test_offshore_market_returns_not_supported_when_adapter_empty(self) -> None:
+        """When yfinance adapter has no data, offshore (US/HK) status is not_supported.
+
+        capital_flow / dragon_tiger / boards stay not_supported regardless of
+        adapter outcome since yfinance has no equivalent feed for those blocks.
+        """
         manager = DataFetcherManager(fetchers=[])
         cfg = SimpleNamespace(
             enable_fundamental_pipeline=True,
-            fundamental_cache_ttl_seconds=120,
+            fundamental_cache_ttl_seconds=0,
             fundamental_stage_timeout_seconds=1.5,
             fundamental_fetch_timeout_seconds=0.8,
             fundamental_retry_max=1,
         )
-        with patch("src.config.get_config", return_value=cfg):
+        empty_bundle = {
+            "status": "not_supported",
+            "growth": {},
+            "earnings": {},
+            "belong_boards": [],
+            "source_chain": [],
+            "errors": [],
+        }
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=None), \
+                patch(
+                    "data_provider.yfinance_fundamental_adapter.YfinanceFundamentalAdapter.get_fundamental_bundle",
+                    return_value=empty_bundle,
+                ):
             ctx = manager.get_fundamental_context("AAPL")
         self.assertEqual(ctx["market"], "us")
         self.assertEqual(ctx["status"], "not_supported")
-        self.assertEqual(ctx["coverage"].get("valuation"), "not_supported")
         self.assertEqual(ctx["coverage"].get("growth"), "not_supported")
         self.assertEqual(ctx["coverage"].get("earnings"), "not_supported")
-        self.assertEqual(ctx["coverage"].get("institution"), "not_supported")
         self.assertEqual(ctx["coverage"].get("capital_flow"), "not_supported")
         self.assertEqual(ctx["coverage"].get("dragon_tiger"), "not_supported")
         self.assertEqual(ctx["coverage"].get("boards"), "not_supported")
+        self.assertEqual(ctx.get("belong_boards"), [])
+
+    def test_offshore_market_populates_blocks_when_adapter_has_data(self) -> None:
+        """US/HK fundamental context surfaces yfinance bundle into growth/earnings/belong_boards."""
+        manager = DataFetcherManager(fetchers=[])
+        cfg = SimpleNamespace(
+            enable_fundamental_pipeline=True,
+            fundamental_cache_ttl_seconds=0,
+            fundamental_stage_timeout_seconds=2.0,
+            fundamental_fetch_timeout_seconds=1.5,
+            fundamental_retry_max=1,
+        )
+        quote = SimpleNamespace(
+            pe_ratio=32.5,
+            pb_ratio=58.2,
+            total_mv=3.4e12,
+            circ_mv=3.4e12,
+            source=SimpleNamespace(value="longbridge"),
+        )
+        bundle = {
+            "status": "partial",
+            "growth": {
+                "revenue_yoy": 16.5,
+                "net_profit_yoy": 19.3,
+                "roe": 141.4,
+                "gross_margin": 47.8,
+            },
+            "earnings": {
+                "financial_report": {
+                    "report_date": "2026-03-31",
+                    "revenue": 1.11e11,
+                    "net_profit_parent": 2.95e10,
+                    "operating_cash_flow": 2.87e10,
+                    "roe": 141.4,
+                    "currency": "USD",
+                },
+                "dividend": {
+                    "events": [{
+                        "event_date": "2026-05-11",
+                        "ex_dividend_date": "2026-05-11",
+                        "cash_dividend_per_share": 0.27,
+                        "is_pre_tax": True,
+                    }],
+                    "ttm_event_count": 4,
+                    "ttm_cash_dividend_per_share": 1.05,
+                    "ttm_dividend_yield_pct": 0.36,
+                },
+            },
+            "belong_boards": [
+                {"name": "Technology", "type": "行业"},
+                {"name": "Consumer Electronics", "type": "概念"},
+            ],
+            "source_chain": ["growth:yfinance.info"],
+            "errors": [],
+        }
+        with patch("src.config.get_config", return_value=cfg), \
+                patch.object(manager, "get_realtime_quote", return_value=quote), \
+                patch(
+                    "data_provider.yfinance_fundamental_adapter.YfinanceFundamentalAdapter.get_fundamental_bundle",
+                    return_value=bundle,
+                ):
+            ctx = manager.get_fundamental_context("AAPL")
+        self.assertEqual(ctx["market"], "us")
+        # Offshore status considers valuation/growth/earnings plus any populated
+        # capital_flow / boards blocks; "ok" when the populated blocks are ok.
+        self.assertEqual(ctx["status"], "ok")
+        self.assertEqual(ctx["coverage"].get("growth"), "ok")
+        self.assertEqual(ctx["coverage"].get("earnings"), "ok")
+        self.assertEqual(ctx["coverage"].get("capital_flow"), "not_supported")
+        # belong_boards from the bundle surface the boards block (was hard-coded
+        # not_supported before the Futu integration made it data-driven).
+        self.assertEqual(ctx["coverage"].get("boards"), "ok")
+        growth_data = ctx["growth"].get("data") or {}
+        self.assertEqual(growth_data.get("revenue_yoy"), 16.5)
+        self.assertEqual(growth_data.get("roe"), 141.4)
+        financial_report = (ctx["earnings"].get("data") or {}).get("financial_report") or {}
+        self.assertEqual(financial_report.get("currency"), "USD")
+        self.assertEqual(financial_report.get("revenue"), 1.11e11)
+        dividend = (ctx["earnings"].get("data") or {}).get("dividend") or {}
+        self.assertEqual(dividend.get("ttm_cash_dividend_per_share"), 1.05)
+        self.assertEqual(dividend.get("ttm_dividend_yield_pct"), 0.36)
+        self.assertEqual(ctx.get("belong_boards"), [
+            {"name": "Technology", "type": "行业"},
+            {"name": "Consumer Electronics", "type": "概念"},
+        ])
 
     def test_etf_market_downgrades_to_partial_or_not_supported(self) -> None:
         manager = DataFetcherManager(fetchers=[])
@@ -312,6 +429,45 @@ class TestFundamentalContext(unittest.TestCase):
             unblock.set()
             time.sleep(0.02)
 
+    def test_timeout_pool_rejection_records_elapsed_not_budget(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        manager._fundamental_timeout_slots = BoundedSemaphore(1)
+        manager._fundamental_timeout_slots.acquire()
+        with patch("data_provider.base.time.monotonic", side_effect=[10.0, 10.037]):
+            result, error, duration = manager._run_with_timeout(lambda: 1, 20, "busy")
+        self.assertIsNone(result)
+        self.assertIn("worker pool exhausted", error)
+        self.assertEqual(duration, 37)
+
+    def test_timeout_records_measured_wait_and_releases_slot_after_completion(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        manager._fundamental_timeout_slots = BoundedSemaphore(1)
+        unblock = Event()
+        finished = Event()
+
+        def task():
+            unblock.wait(timeout=1)
+            finished.set()
+
+        try:
+            with patch("data_provider.base.time.monotonic", side_effect=[10.0, 10.037]):
+                result, error, duration = manager._run_with_timeout(task, 0.001, "blocked")
+            self.assertIsNone(result)
+            self.assertEqual(error, "blocked timeout")
+            self.assertEqual(duration, 37)
+        finally:
+            unblock.set()
+            self.assertTrue(finished.wait(timeout=1))
+
+    def test_completed_tasks_use_monotonic_elapsed(self) -> None:
+        manager = DataFetcherManager(fetchers=[])
+        for task, expected in ((lambda: 7, 7), (lambda: int("invalid"), None)):
+            with patch("data_provider.base.time.monotonic", side_effect=[10.0, 10.037]):
+                result, error, duration = manager._run_with_timeout(task, 20, "completed")
+            self.assertEqual(result, expected)
+            self.assertEqual(duration, 37)
+            self.assertEqual(error is None, expected is not None)
+
     def test_infer_block_status_treats_all_null_payload_as_non_ok(self) -> None:
         self.assertEqual(
             DataFetcherManager._infer_block_status(
@@ -361,6 +517,9 @@ class TestFundamentalContext(unittest.TestCase):
         }
         with patch("src.config.get_config", return_value=cfg), \
                 patch.object(manager, "get_realtime_quote", return_value=quote), \
+                patch.object(manager, "get_capital_flow_context", return_value={"status": "not_supported"}), \
+                patch.object(manager, "get_dragon_tiger_context", return_value={"status": "not_supported"}), \
+                patch.object(manager, "get_board_context", return_value={"status": "not_supported"}), \
                 patch(
                     "data_provider.fundamental_adapter.AkshareFundamentalAdapter.get_fundamental_bundle",
                     return_value=bundle,

@@ -10,11 +10,14 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
-from src.config import AGENT_MAX_STEPS_DEFAULT
+from src.config import (
+    AGENT_CONTEXT_COMPRESSION_PROFILES,
+    AGENT_MAX_STEPS_DEFAULT,
+)
 from src.notification_noise import NOTIFICATION_SEVERITIES
 from src.notification_routing import ROUTABLE_NOTIFICATION_CHANNELS
 
-SCHEMA_VERSION = "2026-05-10"
+SCHEMA_VERSION = "2026-06-29-claude-code-cli-backend"
 
 _CATEGORY_DEFINITIONS: List[Dict[str, Any]] = [
     {
@@ -67,10 +70,28 @@ _CATEGORY_DEFINITIONS: List[Dict[str, Any]] = [
     },
 ]
 
+WEB_SETTINGS_HIDDEN_FROM_UI = {
+    # Optional FXMacroData authorization is read from the process environment
+    # when a tool runs; it is not a Web settings or model-input field.
+    "FXMACRODATA_API_KEY",
+    "DATABASE_PATH",
+    "SQLITE_WAL_ENABLED",
+    "SQLITE_BUSY_TIMEOUT_MS",
+    "SQLITE_WRITE_RETRY_MAX",
+    "SQLITE_WRITE_RETRY_BASE_DELAY",
+    "USE_PROXY",
+    "PROXY_HOST",
+    "PROXY_PORT",
+    "SEARXNG_TIMEOUT_SECONDS",
+    # CLI-only schedule-mode behavior (python main.py --schedule); the WebUI
+    # runtime scheduler does not consult the startup dedup gate.
+    "SCHEDULE_STARTUP_DEDUP",
+}
+
 _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     "STOCK_LIST": {
         "title": "Stock List",
-        "description": "Comma-separated watchlist stock codes.",
+        "description": "Watchlist stock codes. English commas are recommended; common pasted separators are normalized on save.",
         "category": "base",
         "data_type": "array",
         "ui_control": "textarea",
@@ -101,6 +122,186 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     # ------------------------------------------------------------------
     # AI Model – LiteLLM unified config
     # ------------------------------------------------------------------
+    "GENERATION_BACKEND": {
+        "title": "Analysis Generation Method",
+        "description": "Generation method used by stock analysis, market reviews, and regular text generation.",
+        "category": "ai_model",
+        "data_type": "string",
+        "ui_control": "select",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "litellm",
+        "options": [
+            {"label": "Default model settings", "value": "litellm"},
+            {"label": "Codex CLI (experimental)", "value": "codex_cli"},
+            {"label": "Claude Code CLI (experimental)", "value": "claude_code_cli"},
+            {"label": "OpenCode CLI (experimental)", "value": "opencode_cli"},
+        ],
+        "validation": {"enum": ["litellm", "codex_cli", "claude_code_cli", "opencode_cli"]},
+        "display_order": 0,
+        "help_key": "settings.ai_model.GENERATION_BACKEND",
+        "examples": [
+            "GENERATION_BACKEND=litellm",
+            "GENERATION_BACKEND=codex_cli",
+            "GENERATION_BACKEND=claude_code_cli",
+            "GENERATION_BACKEND=opencode_cli",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "OPENCODE_CLI_MODEL": {
+        "title": "OpenCode CLI Model",
+        "description": "Optional model override passed to OpenCode CLI when GENERATION_BACKEND=opencode_cli. Leave empty to use OpenCode's default model.",
+        "category": "ai_model",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "",
+        "placeholder": "optional provider/model override",
+        "validation": {"pattern": r"^$|^[^\s|<>;`$]+$"},
+        "display_order": 1,
+        "help_key": "settings.ai_model.OPENCODE_CLI_MODEL",
+        "examples": [
+            "OPENCODE_CLI_MODEL=provider/model",
+            "OPENCODE_CLI_MODEL=opencode/model-name",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "GENERATION_FALLBACK_BACKEND": {
+        "title": "Fallback Generation Method",
+        "description": "Backend-level fallback method. Empty disables backend fallback; litellm can be used as fallback for local CLI generation backends.",
+        "category": "ai_model",
+        "data_type": "string",
+        "ui_control": "select",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "litellm",
+        "options": [
+            {"label": "Disabled", "value": ""},
+            {"label": "Default model settings", "value": "litellm"},
+        ],
+        "validation": {"enum": ["", "litellm"]},
+        "display_order": 0,
+        "help_key": "settings.ai_model.GENERATION_FALLBACK_BACKEND",
+        "examples": ["GENERATION_FALLBACK_BACKEND=litellm", "GENERATION_FALLBACK_BACKEND="],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "GENERATION_BACKEND_TIMEOUT_SECONDS": {
+        "title": "Generation Backend Timeout",
+        "description": "Maximum seconds allowed for one generation backend call. Applies to local CLI backends; LiteLLM behavior is unchanged.",
+        "category": "ai_model",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "300",
+        "options": [],
+        "validation": {"min": 1, "max": 3600},
+        "display_order": 1,
+        "help_key": "settings.ai_model.GENERATION_BACKEND_TIMEOUT_SECONDS",
+        "examples": ["GENERATION_BACKEND_TIMEOUT_SECONDS=300"],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "GENERATION_BACKEND_MAX_OUTPUT_BYTES": {
+        "title": "Generation Backend Max Output Bytes",
+        "description": (
+            "Maximum captured diagnostic stdout/stderr and final-response bytes "
+            "for one local CLI backend call."
+        ),
+        "category": "ai_model",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "1048576",
+        "options": [],
+        "validation": {"min": 1, "max": 33554432},
+        "display_order": 1,
+        "help_key": "settings.ai_model.GENERATION_BACKEND_MAX_OUTPUT_BYTES",
+        "examples": ["GENERATION_BACKEND_MAX_OUTPUT_BYTES=1048576"],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "GENERATION_BACKEND_MAX_CONCURRENCY": {
+        "title": "Generation Backend Max Concurrency",
+        "description": "Global generation backend concurrency cap. Local CLI effective concurrency also respects LOCAL_CLI_BACKEND_MAX_CONCURRENCY.",
+        "category": "ai_model",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "1",
+        "options": [],
+        "validation": {"min": 1, "max": 16},
+        "display_order": 1,
+        "help_key": "settings.ai_model.GENERATION_BACKEND_MAX_CONCURRENCY",
+        "examples": ["GENERATION_BACKEND_MAX_CONCURRENCY=1"],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "LOCAL_CLI_BACKEND_MAX_CONCURRENCY": {
+        "title": "Local CLI Backend Max Concurrency",
+        "description": "Local CLI backend concurrency cap. Effective local CLI concurrency is the minimum of this value and GENERATION_BACKEND_MAX_CONCURRENCY.",
+        "category": "ai_model",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "1",
+        "options": [],
+        "validation": {"min": 1, "max": 4},
+        "display_order": 1,
+        "help_key": "settings.ai_model.LOCAL_CLI_BACKEND_MAX_CONCURRENCY",
+        "examples": ["LOCAL_CLI_BACKEND_MAX_CONCURRENCY=1"],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
     "LITELLM_MODEL": {
         "title": "Primary Model",
         "description": "Primary model in provider/model format (e.g. gemini/gemini-3.1-pro-preview, deepseek/deepseek-v4-flash, anthropic/claude-sonnet-4-6). If empty, it is auto-inferred from available API keys or channel declarations.",
@@ -128,6 +329,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             {
                 "label": "完整指南：AI 模型配置",
                 "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#ai-模型配置",
+            },
+            {
+                "label": "LiteLLM Providers（官方）",
+                "href": "https://docs.litellm.ai/docs/providers",
+            },
+            {
+                "label": "LiteLLM OpenAI-compatible（官方）",
+                "href": "https://docs.litellm.ai/docs/providers/openai_compatible",
+            },
+            {
+                "label": "LiteLLM model_list（官方）",
+                "href": "https://docs.litellm.ai/docs/proxy/configs#the-model_list-key",
             },
         ],
         "warning_codes": ["provider_prefix_required"],
@@ -189,6 +402,14 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
                 "label": "完整指南：AI 模型配置",
                 "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#ai-模型配置",
             },
+            {
+                "label": "LiteLLM Providers（官方）",
+                "href": "https://docs.litellm.ai/docs/providers",
+            },
+            {
+                "label": "LiteLLM config（官方）",
+                "href": "https://docs.litellm.ai/docs/proxy/configs",
+            },
         ],
         "warning_codes": ["fallback_models_must_be_available"],
     },
@@ -216,6 +437,10 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             {
                 "label": "LLM 配置指南：YAML 模式",
                 "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md#方式三litellm-原生-yaml-配置适合专家或复杂路由",
+            },
+            {
+                "label": "LiteLLM proxy config（官方）",
+                "href": "https://docs.litellm.ai/docs/proxy/configs",
             },
         ],
         "warning_codes": ["yaml_config_overrides_channel_editor"],
@@ -249,6 +474,10 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
                 "label": "LLM 服务商配置速查",
                 "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/llm-providers.md",
             },
+            {
+                "label": "LiteLLM OpenAI-compatible（官方）",
+                "href": "https://docs.litellm.ai/docs/providers/openai_compatible",
+            },
         ],
         "warning_codes": ["channels_override_legacy_keys"],
     },
@@ -278,9 +507,158 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "warning_codes": [],
     },
+    "LLM_PROMPT_CACHE_TELEMETRY_ENABLED": {
+        "title": "Prompt Cache Telemetry",
+        "description": "Records provider prompt-cache usage telemetry and normalized cache diagnostics when providers return cache usage fields. This does not enable or disable provider implicit cache.",
+        "category": "ai_model",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "true",
+        "options": [],
+        "validation": {},
+        "display_order": 6,
+        "help_key": "settings.ai_model.LLM_PROMPT_CACHE_TELEMETRY_ENABLED",
+        "examples": [
+            "LLM_PROMPT_CACHE_TELEMETRY_ENABLED=true",
+            "LLM_PROMPT_CACHE_TELEMETRY_ENABLED=false",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "LLM_PROMPT_CACHE_HINTS_ENABLED": {
+        "title": "Prompt Cache Hints",
+        "description": "Allows the project to send verified provider-specific prompt-cache hints such as prompt_cache_key or cache_control. Unknown providers and unverified routes remain telemetry-only.",
+        "category": "ai_model",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "false",
+        "options": [],
+        "validation": {},
+        "display_order": 7,
+        "help_key": "settings.ai_model.LLM_PROMPT_CACHE_HINTS_ENABLED",
+        "examples": [
+            "LLM_PROMPT_CACHE_HINTS_ENABLED=false",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL": {
+        "title": "Prompt Cache Diagnostics",
+        "description": "Controls non-sensitive prompt-cache capability and hint decision diagnostics. Values: off, basic, debug.",
+        "category": "ai_model",
+        "data_type": "string",
+        "ui_control": "select",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "off",
+        "options": [
+            {"value": "off", "label": "Off"},
+            {"value": "basic", "label": "Basic"},
+            {"value": "debug", "label": "Debug"},
+        ],
+        "validation": {"enum": ["off", "basic", "debug"]},
+        "display_order": 8,
+        "help_key": "settings.ai_model.LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL",
+        "examples": [
+            "LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL=off",
+            "LLM_PROMPT_CACHE_DIAGNOSTICS_LEVEL=basic",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "LLM_USAGE_HMAC_SECRET": {
+        "title": "LLM Usage HMAC Secret",
+        "description": "Optional deployment-scoped secret for LLM usage telemetry prompt/message HMAC. Leave empty to use a local generated secret file. If set, use a high-entropy random value and do not commit it to version control.",
+        "category": "ai_model",
+        "data_type": "string",
+        "ui_control": "password",
+        "is_sensitive": True,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": None,
+        "options": [],
+        "validation": {},
+        "display_order": 9,
+        "help_key": "settings.ai_model.LLM_USAGE_HMAC_SECRET",
+        "examples": [
+            "LLM_USAGE_HMAC_SECRET=<64-char random hex from openssl rand -hex 32>",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": ["secret_value"],
+    },
+    "LLM_USAGE_HMAC_KEY_VERSION": {
+        "title": "LLM Usage HMAC Key Version",
+        "description": "Version label for the LLM usage telemetry HMAC key. Change it when rotating LLM_USAGE_HMAC_SECRET.",
+        "category": "ai_model",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "local-v1",
+        "options": [],
+        "validation": {},
+        "display_order": 10,
+        "help_key": "settings.ai_model.LLM_USAGE_HMAC_KEY_VERSION",
+        "examples": [
+            "LLM_USAGE_HMAC_KEY_VERSION=prod-2026-06",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "MODELFLARE_KEY": {
+        "title": "Modelflare API Key",
+        "description": "Modelflare API key. Automatically enables its channel with the default endpoint and model; explicit channel configuration takes precedence.",
+        "category": "ai_model",
+        "data_type": "string",
+        "ui_control": "password",
+        "is_sensitive": True,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": None,
+        "options": [],
+        "validation": {},
+        "display_order": 4,
+        "help_key": "settings.ai_model.provider_keys",
+        "examples": ["MODELFLARE_KEY=sk-xxxx"],
+        "docs": [{"label": "LLM 配置指南", "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md"}],
+        "warning_codes": ["secret_value"],
+    },
     "AIHUBMIX_KEY": {
         "title": "AIHubmix Key",
-        "description": "AIHubmix one-stop API key – access all mainstream models with a single key, no VPN required. Auto-sets base URL to aihubmix.com/v1. Get key: https://aihubmix.com/?aff=CfMq",
+        "description": "AIHubmix one-stop API key – access all mainstream models with a single key, no VPN required. Auto-sets base URL to aihubmix.com/v1. Get key: https://inferera.com/?aff=CfMq",
         "category": "ai_model",
         "data_type": "string",
         "ui_control": "password",
@@ -427,7 +805,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "TICKFLOW_API_KEY": {
         "title": "TickFlow API Key",
-        "description": "API key for TickFlow market review enhancement (A-share indices, plus market stats when universe queries are enabled).",
+        "description": "API key for optional TickFlow A-share daily K-lines, realtime quotes, stock list/name lookup, and market review enhancement. Permission failures fail open to existing providers.",
         "category": "data_source",
         "data_type": "string",
         "ui_control": "password",
@@ -438,6 +816,222 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 15,
+    },
+    "TICKFLOW_PRIORITY": {
+        "title": "TickFlow Daily K-line Priority",
+        "description": "Priority for TickFlow in the generic A-share daily K-line route. Registered indices use the fixed Tencent -> AkShare -> TickFlow -> YFinance chain and ignore this setting; realtime quote order is controlled separately by REALTIME_SOURCE_PRIORITY.",
+        "category": "data_source",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "2",
+        "options": [],
+        "validation": {"min": 0, "max": 99},
+        "display_order": 16,
+    },
+    "TICKFLOW_KLINE_ADJUST": {
+        "title": "TickFlow K-line Adjust",
+        "description": "Adjustment mode for TickFlow daily K-lines. Default none preserves the existing unadjusted technical-indicator baseline.",
+        "category": "data_source",
+        "data_type": "string",
+        "ui_control": "select",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "none",
+        "options": ["none", "forward", "backward", "forward_additive", "backward_additive"],
+        "validation": {},
+        "display_order": 17,
+    },
+    "TICKFLOW_BATCH_DAILY_ENABLED": {
+        "title": "TickFlow Batch Daily Enabled",
+        "description": "Enable TickFlow batch daily K-line prefetch when the current plan allows it. Permission failures fail open and fall back to per-stock providers.",
+        "category": "data_source",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "true",
+        "options": [],
+        "validation": {},
+        "display_order": 18,
+    },
+    "MX_APIKEY": {
+        "title": "MiaoXiang (MX_API) API Key",
+        "description": "API key for the optional MiaoXiang supplementary data provider (chip distribution / per-stock capital flow). Only used when the primary eastmoney endpoints fail or are rate-limited; not configured means no behavior change.",
+        "category": "data_source",
+        "data_type": "string",
+        "ui_control": "password",
+        "is_sensitive": True,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": None,
+        "options": [],
+        "validation": {},
+        "display_order": 20,
+    },
+    "MX_PRIORITY": {
+        "title": "MiaoXiang Data Source Priority",
+        "description": "Priority for the MiaoxiangFetcher supplementary data source. Lower numbers are tried earlier. The fetcher never participates in daily K-line fetching.",
+        "category": "data_source",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "6",
+        "options": [],
+        "validation": {"min": 0, "max": 99},
+        "display_order": 21,
+    },
+    "TICKFLOW_BATCH_SIZE": {
+        "title": "TickFlow Batch Size",
+        "description": "Maximum symbols per TickFlow batch request for daily K-lines and realtime quotes.",
+        "category": "data_source",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "100",
+        "options": [],
+        "validation": {"min": 1, "max": 500},
+        "display_order": 19,
+    },
+    "FUTU_OPEND_HOST": {
+        "title": "Futu OpenD Host",
+        "description": "IPv4 address or IPv4-resolvable hostname of the Futu OpenD service. Leave empty to disable Futu.",
+        "category": "data_source",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": None,
+        "options": [],
+        "validation": {},
+        "display_order": 20,
+        "help_key": "settings.data_source.FUTU_OPEND_HOST",
+        "examples": ["FUTU_OPEND_HOST=127.0.0.1"],
+        "docs": [
+            {
+                "label": "数据源配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#数据源配置",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "FUTU_OPEND_PORT": {
+        "title": "Futu OpenD Port",
+        "description": "TCP port of the Futu OpenD service.",
+        "category": "data_source",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "11111",
+        "options": [],
+        "validation": {"min": 1, "max": 65535},
+        "display_order": 21,
+        "help_key": "settings.data_source.FUTU_OPEND_PORT",
+        "examples": ["FUTU_OPEND_PORT=11111"],
+        "docs": [
+            {
+                "label": "数据源配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#数据源配置",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "FUTU_HK_REALTIME_SOURCE_PRIORITY": {
+        "title": "Futu 港股实时数据源优先级",
+        "description": "港股实时行情优先级，可选 futu、longbridge、akshare、yfinance。未配置 OpenD 时自动跳过 futu。",
+        "category": "data_source",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "futu,longbridge,akshare,yfinance",
+        "options": [],
+        "validation": {},
+        "display_order": 22,
+        "help_key": "settings.data_source.FUTU_HK_REALTIME_SOURCE_PRIORITY",
+        "examples": ["FUTU_HK_REALTIME_SOURCE_PRIORITY=futu,longbridge,akshare,yfinance"],
+        "docs": [
+            {
+                "label": "数据源配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#数据源配置",
+            },
+        ],
+        "warning_codes": ["provider_priority_order"],
+    },
+    "STOCK_INDEX_REMOTE_UPDATE_ENABLED": {
+        "title": "Remote Stock Index Updates",
+        "description": "Automatically refresh the local stock autocomplete index from the built-in GitHub main source.",
+        "category": "data_source",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "true",
+        "options": [],
+        "validation": {},
+        "display_order": 16,
+        "help_key": "settings.data_source.stock_index_remote",
+        "examples": [
+            "STOCK_INDEX_REMOTE_UPDATE_ENABLED=true",
+            "STOCK_INDEX_REMOTE_UPDATE_ENABLED=false",
+        ],
+        "docs": [
+            {
+                "label": "Tushare 股票列表指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/TUSHARE_STOCK_LIST_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "SCREENING_ENABLED": {
+        "title": "Built-in Stock Screening",
+        "description": "Enable DSA's built-in stock screening tab. The implementation is based on AlphaSift and maintained as part of DSA. Disabled by default.",
+        "category": "base",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "false",
+        "options": [],
+        "validation": {},
+        "display_order": 17,
+        "help_key": "settings.base.SCREENING_ENABLED",
+        "examples": [
+            "SCREENING_ENABLED=false",
+            "SCREENING_ENABLED=true",
+        ],
+        "docs": [
+            {
+                "label": "LiteLLM Providers（官方）",
+                "href": "https://docs.litellm.ai/docs/providers",
+            },
+            {
+                "label": "LiteLLM OpenAI-compatible（官方）",
+                "href": "https://docs.litellm.ai/docs/providers/openai_compatible",
+            },
+            {
+                "label": "OpenAI 请求与鉴权（官方）",
+                "href": "https://platform.openai.com/docs/api-reference/authentication",
+            },
+            {
+                "label": "选股说明",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/screening-engine.md",
+            },
+        ],
     },
     "REALTIME_SOURCE_PRIORITY": {
         "title": "Realtime Source Priority",
@@ -630,14 +1224,14 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "SEARXNG_PUBLIC_INSTANCES_ENABLED": {
         "title": "SearXNG Public Instances",
-        "description": "Auto-discover public SearXNG instances from searx.space when SEARXNG_BASE_URLS is empty. Default: true; set false to disable.",
+        "description": "Auto-discover public SearXNG instances from searx.space when SEARXNG_BASE_URLS is empty. Default: false; set true to enable.",
         "category": "data_source",
         "data_type": "boolean",
         "ui_control": "switch",
         "is_sensitive": False,
         "is_required": False,
         "is_editable": True,
-        "default_value": "true",
+        "default_value": "false",
         "options": [],
         "validation": {},
         "display_order": 53,
@@ -1144,6 +1738,87 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "validation": {},
         "display_order": 30,
     },
+    "DINGTALK_STREAM_ENABLED": {
+        "title": "DingTalk Stream Mode",
+        "description": "Enable DingTalk application bot stream/long-connection mode. This is separate from DingTalk group webhook delivery.",
+        "category": "notification",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "false",
+        "options": [],
+        "validation": {},
+        "display_order": 35,
+        "help_key": "settings.notification.DINGTALK_STREAM_ENABLED",
+        "examples": [
+            "DINGTALK_STREAM_ENABLED=false",
+            "DINGTALK_STREAM_ENABLED=true",
+            "DINGTALK_APP_KEY=your_dingtalk_app_key",
+            "DINGTALK_APP_SECRET=your_dingtalk_app_secret",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：通知渠道配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#通知渠道详细配置",
+            },
+        ],
+        "warning_codes": ["not_webhook_delivery", "restart_required"],
+    },
+    "DINGTALK_WEBHOOK_URL": {
+        "title": "DingTalk Bot Webhook",
+        "description": "DingTalk group robot webhook URL. This is separate from App/Stream mode.",
+        "category": "notification",
+        "data_type": "string",
+        "ui_control": "password",
+        "is_sensitive": True,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": None,
+        "options": [],
+        "validation": {
+            "item_type": "url",
+            "allowed_schemes": ["http", "https"],
+        },
+        "display_order": 18,
+        "help_key": "settings.notification.DINGTALK_WEBHOOK_URL",
+        "examples": [
+            "DINGTALK_WEBHOOK_URL=https://oapi.dingtalk.com/robot/send?access_token=your_token",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：通知渠道配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#通知渠道详细配置",
+            },
+        ],
+        "warning_codes": ["webhook_secret_value"],
+    },
+    "DINGTALK_SECRET": {
+        "title": "DingTalk Signing Secret",
+        "description": "Signing secret for a DingTalk group robot. Leave empty when signing is disabled.",
+        "category": "notification",
+        "data_type": "string",
+        "ui_control": "password",
+        "is_sensitive": True,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": None,
+        "options": [],
+        "validation": {},
+        "display_order": 19,
+        "help_key": "settings.notification.DINGTALK_SECRET",
+        "examples": [
+            "DINGTALK_SECRET=your_dingtalk_signing_secret",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：通知渠道配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#通知渠道详细配置",
+            },
+        ],
+        "warning_codes": ["secret_value"],
+    },
     "PUSHPLUS_TOKEN": {
         "title": "PushPlus Token",
         "description": "Token for PushPlus notifications.",
@@ -1171,16 +1846,12 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "help_key": "settings.notification.CUSTOM_WEBHOOK_URLS",
         "examples": [
-            "https://api.day.app/YOUR_BARK_KEY",
-            "https://oapi.dingtalk.com/robot/send?access_token=xxx",
+            "CUSTOM_WEBHOOK_URLS=https://api.day.app/YOUR_BARK_KEY",
+            "CUSTOM_WEBHOOK_URLS=https://oapi.dingtalk.com/robot/send?access_token=xxx",
+            "CUSTOM_WEBHOOK_BODY_TEMPLATE={\"msg_type\":\"text\",\"content\":$content_json}",
         ],
         "validation": {"multi_value": True, "delimiter": ","},
         "display_order": 50,
-        "help_key": "settings.notification.CUSTOM_WEBHOOK_URLS",
-        "examples": [
-            "CUSTOM_WEBHOOK_URLS=https://example.com/webhook",
-            "CUSTOM_WEBHOOK_BODY_TEMPLATE={\"msg_type\":\"text\",\"content\":$content_json}",
-        ],
         "docs": [
             {
                 "label": "完整指南：自定义 Webhook",
@@ -1261,6 +1932,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 53,
+        "help_key": "settings.report.REPORT_SUMMARY_ONLY",
+        "examples": [
+            "REPORT_SUMMARY_ONLY=true",
+            "REPORT_SUMMARY_ONLY=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "REPORT_SHOW_LLM_MODEL": {
         "title": "Show LLM Model in Reports",
@@ -1275,6 +1958,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 54,
+        "help_key": "settings.report.REPORT_SHOW_LLM_MODEL",
+        "examples": [
+            "REPORT_SHOW_LLM_MODEL=true",
+            "REPORT_SHOW_LLM_MODEL=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     # ------------------------------------------------------------------
     # Notification – Feishu
@@ -1368,6 +2063,113 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 16,
+    },
+    "FEISHU_STREAM_ENABLED": {
+        "title": "Feishu Stream Mode",
+        "description": "Enable Feishu application bot stream mode. This is separate from Feishu group webhook delivery.",
+        "category": "notification",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "false",
+        "options": [],
+        "validation": {},
+        "display_order": 17,
+        "help_key": "settings.notification.FEISHU_STREAM_ENABLED",
+        "examples": [
+            "FEISHU_STREAM_ENABLED=false",
+            "FEISHU_STREAM_ENABLED=true",
+            "FEISHU_APP_ID=cli_xxxxx",
+            "FEISHU_APP_SECRET=your_feishu_app_secret",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：飞书通知配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#飞书",
+            },
+            {
+                "label": "飞书机器人配置专题",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/bot/feishu-bot-config.md",
+            },
+        ],
+        "warning_codes": ["not_webhook_delivery", "restart_required"],
+    },
+    "FEISHU_CHAT_ID": {
+        "title": "Feishu Chat ID",
+        "description": "Target chat_id (group mode, oc_xxx) or open_id (P2P mode, ou_xxx) for Feishu App Bot notification delivery. Requires FEISHU_APP_ID + FEISHU_APP_SECRET.",
+        "category": "notification",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": None,
+        "options": [],
+        "validation": {},
+        "display_order": 18,
+        "help_key": "settings.notification.FEISHU_CHAT_ID",
+        "examples": [
+            "FEISHU_CHAT_ID=oc_xxxxxxxxxxxxx",
+            "FEISHU_CHAT_ID=ou_xxxxxxxxxxxxx",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：飞书通知配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#飞书",
+            },
+        ],
+    },
+    "FEISHU_RECEIVE_ID_TYPE": {
+        "title": "Feishu Receive ID Type",
+        "description": "Type of FEISHU_CHAT_ID: 'chat_id' for group chat, 'open_id' for P2P private message.",
+        "category": "notification",
+        "data_type": "string",
+        "ui_control": "select",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "chat_id",
+        "options": [{"label": "chat_id (群聊)", "value": "chat_id"}, {"label": "open_id (私聊)", "value": "open_id"}],
+        "validation": {"enum": ["chat_id", "open_id"]},
+        "display_order": 19,
+        "help_key": "settings.notification.FEISHU_RECEIVE_ID_TYPE",
+        "examples": [
+            "FEISHU_RECEIVE_ID_TYPE=chat_id",
+            "FEISHU_RECEIVE_ID_TYPE=open_id",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：飞书通知配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#飞书",
+            },
+        ],
+    },
+    "FEISHU_DOMAIN": {
+        "title": "Feishu Domain",
+        "description": "Feishu API domain: 'feishu' (feishu.cn for mainland China) or 'lark' (larksuite.com for international).",
+        "category": "notification",
+        "data_type": "string",
+        "ui_control": "select",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "feishu",
+        "options": [{"label": "feishu (飞书国内)", "value": "feishu"}, {"label": "lark (国际版)", "value": "lark"}],
+        "validation": {"enum": ["feishu", "lark"]},
+        "display_order": 20,
+        "help_key": "settings.notification.FEISHU_DOMAIN",
+        "examples": [
+            "FEISHU_DOMAIN=feishu",
+            "FEISHU_DOMAIN=lark",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：飞书通知配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#飞书",
+            },
+        ],
     },
     # ------------------------------------------------------------------
     # Notification – Telegram
@@ -1827,6 +2629,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 54,
+        "help_key": "settings.report.SINGLE_STOCK_NOTIFY",
+        "examples": [
+            "SINGLE_STOCK_NOTIFY=true",
+            "SINGLE_STOCK_NOTIFY=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "REPORT_TYPE": {
         "title": "Report Type",
@@ -1857,7 +2671,7 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
     },
     "REPORT_LANGUAGE": {
         "title": "Report Language",
-        "description": "Default output language for reports and notification templates. Supported values: zh, en.",
+        "description": "Default output language for reports, Agent Chat fallback replies, and notification templates. Supported values: zh, en, ko.",
         "category": "notification",
         "data_type": "string",
         "ui_control": "select",
@@ -1868,13 +2682,15 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [
             {"label": "Chinese", "value": "zh"},
             {"label": "English", "value": "en"},
+            {"label": "Korean", "value": "ko"},
         ],
-        "validation": {"enum": ["zh", "en"]},
+        "validation": {"enum": ["zh", "en", "ko"]},
         "display_order": 56,
         "help_key": "settings.notification.report_output",
         "examples": [
             "REPORT_LANGUAGE=zh",
             "REPORT_LANGUAGE=en",
+            "REPORT_LANGUAGE=ko",
         ],
         "docs": [
             {
@@ -1897,6 +2713,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 57,
+        "help_key": "settings.report.REPORT_TEMPLATES_DIR",
+        "examples": [
+            "REPORT_TEMPLATES_DIR=templates",
+            "REPORT_TEMPLATES_DIR=custom_templates",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "REPORT_RENDERER_ENABLED": {
         "title": "Report Renderer Enabled",
@@ -1911,6 +2739,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 58,
+        "help_key": "settings.report.REPORT_RENDERER_ENABLED",
+        "examples": [
+            "REPORT_RENDERER_ENABLED=true",
+            "REPORT_RENDERER_ENABLED=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "REPORT_INTEGRITY_ENABLED": {
         "title": "Report Integrity Enabled",
@@ -1925,6 +2765,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 58,
+        "help_key": "settings.report.REPORT_INTEGRITY_ENABLED",
+        "examples": [
+            "REPORT_INTEGRITY_ENABLED=true",
+            "REPORT_INTEGRITY_RETRY=1",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "REPORT_INTEGRITY_RETRY": {
         "title": "Report Integrity Retry",
@@ -1939,6 +2791,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 0, "max": 3},
         "display_order": 59,
+        "help_key": "settings.report.REPORT_INTEGRITY_ENABLED",
+        "examples": [
+            "REPORT_INTEGRITY_RETRY=1",
+            "REPORT_INTEGRITY_RETRY=0",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "REPORT_HISTORY_COMPARE_N": {
         "title": "Report History Compare N",
@@ -1953,6 +2817,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 0, "max": 10},
         "display_order": 60,
+        "help_key": "settings.report.REPORT_HISTORY_COMPARE_N",
+        "examples": [
+            "REPORT_HISTORY_COMPARE_N=0",
+            "REPORT_HISTORY_COMPARE_N=5",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "MERGE_EMAIL_NOTIFICATION": {
         "title": "Merge Email Notification",
@@ -1967,6 +2843,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 61,
+        "help_key": "settings.report.MERGE_EMAIL_NOTIFICATION",
+        "examples": [
+            "MERGE_EMAIL_NOTIFICATION=true",
+            "MERGE_EMAIL_NOTIFICATION=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "NOTIFICATION_REPORT_CHANNELS": {
         "title": "Report Notification Channels",
@@ -1981,6 +2869,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [{"label": channel, "value": channel} for channel in ROUTABLE_NOTIFICATION_CHANNELS],
         "validation": {"allowed_values": list(ROUTABLE_NOTIFICATION_CHANNELS), "delimiter": ","},
         "display_order": 62,
+        "help_key": "settings.notification.channel_routing",
+        "examples": [
+            "NOTIFICATION_REPORT_CHANNELS=email,feishu",
+            "NOTIFICATION_REPORT_CHANNELS=",
+        ],
+        "docs": [
+            {
+                "label": "通知渠道与路由",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/notifications.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "NOTIFICATION_ALERT_CHANNELS": {
         "title": "Alert Notification Channels",
@@ -1995,6 +2895,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [{"label": channel, "value": channel} for channel in ROUTABLE_NOTIFICATION_CHANNELS],
         "validation": {"allowed_values": list(ROUTABLE_NOTIFICATION_CHANNELS), "delimiter": ","},
         "display_order": 63,
+        "help_key": "settings.notification.channel_routing",
+        "examples": [
+            "NOTIFICATION_ALERT_CHANNELS=feishu,telegram",
+            "NOTIFICATION_ALERT_CHANNELS=",
+        ],
+        "docs": [
+            {
+                "label": "通知渠道与路由",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/notifications.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "NOTIFICATION_SYSTEM_ERROR_CHANNELS": {
         "title": "System Error Notification Channels",
@@ -2009,6 +2921,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [{"label": channel, "value": channel} for channel in ROUTABLE_NOTIFICATION_CHANNELS],
         "validation": {"allowed_values": list(ROUTABLE_NOTIFICATION_CHANNELS), "delimiter": ","},
         "display_order": 64,
+        "help_key": "settings.notification.channel_routing",
+        "examples": [
+            "NOTIFICATION_SYSTEM_ERROR_CHANNELS=email",
+            "NOTIFICATION_SYSTEM_ERROR_CHANNELS=",
+        ],
+        "docs": [
+            {
+                "label": "通知渠道与路由",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/notifications.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "NOTIFICATION_DEDUP_TTL_SECONDS": {
         "title": "Notification Dedup TTL Seconds",
@@ -2023,6 +2947,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 0},
         "display_order": 65,
+        "help_key": "settings.notification.dedup",
+        "examples": [
+            "NOTIFICATION_DEDUP_TTL_SECONDS=3600",
+            "NOTIFICATION_COOLDOWN_SECONDS=600",
+        ],
+        "docs": [
+            {
+                "label": "通知渠道与路由",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/notifications.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "NOTIFICATION_COOLDOWN_SECONDS": {
         "title": "Notification Cooldown Seconds",
@@ -2037,6 +2973,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 0},
         "display_order": 66,
+        "help_key": "settings.notification.dedup",
+        "examples": [
+            "NOTIFICATION_COOLDOWN_SECONDS=600",
+            "NOTIFICATION_DEDUP_TTL_SECONDS=3600",
+        ],
+        "docs": [
+            {
+                "label": "通知渠道与路由",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/notifications.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "NOTIFICATION_QUIET_HOURS": {
         "title": "Notification Quiet Hours",
@@ -2051,6 +2999,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"pattern": r"^([01]\d|2[0-3]):[0-5]\d-([01]\d|2[0-3]):[0-5]\d$"},
         "display_order": 67,
+        "help_key": "settings.notification.quiet_hours",
+        "examples": [
+            "NOTIFICATION_QUIET_HOURS=23:00-07:00",
+            "NOTIFICATION_TIMEZONE=Asia/Shanghai",
+        ],
+        "docs": [
+            {
+                "label": "通知渠道与路由",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/notifications.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "NOTIFICATION_TIMEZONE": {
         "title": "Notification Timezone",
@@ -2065,6 +3025,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"timezone": True},
         "display_order": 68,
+        "help_key": "settings.notification.quiet_hours",
+        "examples": [
+            "NOTIFICATION_TIMEZONE=Asia/Shanghai",
+            "NOTIFICATION_TIMEZONE=America/New_York",
+        ],
+        "docs": [
+            {
+                "label": "通知渠道与路由",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/notifications.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "NOTIFICATION_MIN_SEVERITY": {
         "title": "Notification Minimum Severity",
@@ -2082,6 +3054,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "validation": {"enum": ["", *NOTIFICATION_SEVERITIES]},
         "display_order": 69,
+        "help_key": "settings.notification.MIN_SEVERITY",
+        "examples": [
+            "NOTIFICATION_MIN_SEVERITY=warning",
+            "NOTIFICATION_MIN_SEVERITY=",
+        ],
+        "docs": [
+            {
+                "label": "通知渠道与路由",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/notifications.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "NOTIFICATION_DAILY_DIGEST_ENABLED": {
         "title": "Notification Daily Digest Enabled (Reserved)",
@@ -2096,6 +3080,17 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 70,
+        "help_key": "settings.notification.DAILY_DIGEST_ENABLED",
+        "examples": [
+            "NOTIFICATION_DAILY_DIGEST_ENABLED=false",
+        ],
+        "docs": [
+            {
+                "label": "通知渠道与路由",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/notifications.md",
+            },
+        ],
+        "warning_codes": ["reserved_flag"],
     },
     "SCHEDULE_TIME": {
         "title": "Schedule Time",
@@ -2123,6 +3118,87 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             },
         ],
         "warning_codes": ["local_timezone"],
+    },
+    "SCHEDULE_TIMES": {
+        "title": "Schedule Times",
+        "description": "Comma-separated daily schedule times in HH:MM format. Falls back to SCHEDULE_TIME when empty.",
+        "category": "system",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "",
+        "options": [],
+        "validation": {"pattern": r"^\s*(?:(?:[01]\d|2[0-3]):[0-5]\d\s*(?:,\s*(?:[01]\d|2[0-3]):[0-5]\d\s*)*)?$"},
+        "display_order": 11,
+        "help_key": "settings.system.schedule",
+        "examples": [
+            "SCHEDULE_TIMES=09:20,12:30,15:10,18:00",
+            "SCHEDULE_TIME=18:00",
+            "SCHEDULE_ENABLED=true",
+        ],
+        "docs": [
+            {
+                "label": "Full guide: configuration",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#其他配置",
+            },
+        ],
+        "warning_codes": ["local_timezone"],
+    },
+    "DSA_RUNTIME_SCHEDULER_TIMEOUT_SECONDS": {
+        "title": "Runtime Scheduler Timeout",
+        "description": "Hard timeout in seconds for each Web/API scheduled analysis.",
+        "category": "system",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "2700",
+        "options": [],
+        "validation": {"min": 60},
+        "display_order": 12,
+        "help_key": "settings.system.schedule",
+        "examples": [
+            "DSA_RUNTIME_SCHEDULER_TIMEOUT_SECONDS=2700",
+        ],
+        "docs": [
+            {
+                "label": "Full guide: configuration",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#其他配置",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "DSA_TIMEOUT_PARTIAL_NOTIFY": {
+        "title": "Timeout Partial Notification",
+        "description": (
+            "After a Web/API runtime scheduler hard timeout, send a partial "
+            "notification for analyses already saved to history."
+        ),
+        "category": "system",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "true",
+        "options": [],
+        "validation": {},
+        "display_order": 13,
+        "help_key": "settings.system.schedule",
+        "examples": [
+            "DSA_TIMEOUT_PARTIAL_NOTIFY=true",
+            "DSA_TIMEOUT_PARTIAL_NOTIFY=false",
+        ],
+        "docs": [
+            {
+                "label": "Full guide: configuration",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#其他配置",
+            },
+        ],
+        "warning_codes": [],
     },
     "HTTP_PROXY": {
         "title": "HTTP Proxy",
@@ -2163,6 +3239,104 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         "validation": {"enum": ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]},
         "display_order": 30,
+        "help_key": "settings.system.LOG_LEVEL",
+        "examples": [
+            "LOG_LEVEL=INFO",
+            "LOG_LEVEL=DEBUG",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": ["restart_required"],
+    },
+    "LOG_DIR": {
+        "title": "Log Directory",
+        "description": "Directory for application logs. The runtime user or container must be able to write to this path.",
+        "category": "system",
+        "data_type": "string",
+        "ui_control": "text",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "./logs",
+        "options": [],
+        "validation": {},
+        "display_order": 31,
+        "help_key": "settings.system.LOG_DIR",
+        "examples": [
+            "LOG_DIR=./logs",
+            "LOG_DIR=/app/logs",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": ["restart_required", "path_must_be_writable"],
+    },
+    "WEBUI_ENABLED": {
+        "title": "Web UI Enabled",
+        "description": "Startup-time compatibility flag for default WebUI/API service mode. Saving this setting does not start or stop the current process.",
+        "category": "system",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "false",
+        "options": [],
+        "validation": {},
+        "display_order": 37,
+        "help_key": "settings.system.WEBUI_ENABLED",
+        "examples": [
+            "WEBUI_ENABLED=false",
+            "WEBUI_ENABLED=true",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：WebUI 与 API",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#webui-与-api-服务",
+            },
+            {
+                "label": "云服务器访问 WebUI",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/deploy-webui-cloud.md",
+            },
+        ],
+        "warning_codes": ["restart_required"],
+    },
+    "WEBUI_AUTO_BUILD": {
+        "title": "Web UI Auto Build",
+        "description": "Build or verify the Web frontend assets before backend WebUI startup. Disable only when assets are prebuilt.",
+        "category": "system",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "true",
+        "options": [],
+        "validation": {},
+        "display_order": 38,
+        "help_key": "settings.system.WEBUI_AUTO_BUILD",
+        "examples": [
+            "WEBUI_AUTO_BUILD=true",
+            "WEBUI_AUTO_BUILD=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：WebUI 与 API",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#webui-与-api-服务",
+            },
+            {
+                "label": "云服务器访问 WebUI",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/deploy-webui-cloud.md",
+            },
+        ],
+        "warning_codes": ["restart_required", "requires_built_web_assets"],
     },
     "WEBUI_HOST": {
         "title": "Web UI Host",
@@ -2402,20 +3576,71 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 46,
+        "help_key": "settings.system.market_review",
+        "examples": [
+            "MARKET_REVIEW_ENABLED=true",
+            "MARKET_REVIEW_REGION=cn",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "DAILY_MARKET_CONTEXT_ENABLED": {
+        "title": "Daily Market Context Enabled",
+        "description": "Inject daily market context into stock-analysis prompts and apply conservative decision guardrails.",
+        "category": "system",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "true",
+        "options": [],
+        "validation": {},
+        "display_order": 47,
+        "help_key": "settings.system.market_review",
+        "examples": [
+            "DAILY_MARKET_CONTEXT_ENABLED=true",
+            "DAILY_MARKET_CONTEXT_ENABLED=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "MARKET_REVIEW_REGION": {
         "title": "Market Review Region",
-        "description": "Market region for review: cn (A-shares), hk (Hong Kong), us (US stocks), or both (all markets).",
+        "description": "Market region for review: cn (A-shares), hk (Hong Kong), us (US stocks), jp (Japan), kr (Korea), or both (all markets).",
         "category": "system",
         "data_type": "string",
-        "ui_control": "select",
+        "ui_control": "text",
         "is_sensitive": False,
         "is_required": False,
         "is_editable": True,
         "default_value": "cn",
-        "options": ["cn", "hk", "us", "both"],
-        "validation": {"enum": ["cn", "hk", "us", "both"]},
-        "display_order": 47,
+        "options": ["cn", "hk", "us", "jp", "kr", "both"],
+        "validation": {"allowed_values": ["cn", "hk", "us", "jp", "kr", "both"], "delimiter": ","},
+        "display_order": 48,
+        "help_key": "settings.system.market_review",
+        "examples": [
+            "MARKET_REVIEW_REGION=cn",
+            "MARKET_REVIEW_REGION=jp",
+            "MARKET_REVIEW_REGION=both",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "MARKET_REVIEW_COLOR_SCHEME": {
         "title": "Market Review Color Scheme",
@@ -2432,7 +3657,19 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
             {"label": "Red Up / Green Down", "value": "red_up"},
         ],
         "validation": {"enum": ["green_up", "red_up"]},
-        "display_order": 48,
+        "display_order": 49,
+        "help_key": "settings.system.market_review",
+        "examples": [
+            "MARKET_REVIEW_COLOR_SCHEME=green_up",
+            "MARKET_REVIEW_COLOR_SCHEME=red_up",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "MAX_WORKERS": {
         "title": "Max Workers",
@@ -2447,6 +3684,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 1, "max": 20},
         "display_order": 50,
+        "help_key": "settings.system.MAX_WORKERS",
+        "examples": [
+            "MAX_WORKERS=3",
+            "MAX_WORKERS=5",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "ANALYSIS_DELAY": {
         "title": "Analysis Delay",
@@ -2461,6 +3710,49 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 0, "max": 60},
         "display_order": 51,
+        "help_key": "settings.system.ANALYSIS_DELAY",
+        "examples": [
+            "ANALYSIS_DELAY=0",
+            "ANALYSIS_DELAY=5",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "SAVE_CONTEXT_SNAPSHOT": {
+        "title": "Save Context Snapshot",
+        "description": "Persist the full analysis_history.context_snapshot for history/API/Web transparency. Disable only to stop storing snapshots; it does not disable AnalysisContextPack prompt summaries during the current run.",
+        "category": "system",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "true",
+        "options": [],
+        "validation": {},
+        "display_order": 52,
+        "help_key": "settings.system.SAVE_CONTEXT_SNAPSHOT",
+        "examples": [
+            "SAVE_CONTEXT_SNAPSHOT=true",
+            "SAVE_CONTEXT_SNAPSHOT=false",
+            "python main.py --no-context-snapshot",
+        ],
+        "docs": [
+            {
+                "label": "AnalysisContextPack P6 文档、迁移与回滚",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/analysis-context-pack.md#p6-文档迁移与回滚",
+            },
+            {
+                "label": "完整指南：其他配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#其他配置",
+            },
+        ],
+        "warning_codes": [],
     },
     "DEBUG": {
         "title": "Debug Mode",
@@ -2475,6 +3767,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 55,
+        "help_key": "settings.system.DEBUG",
+        "examples": [
+            "DEBUG=true",
+            "DEBUG=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "BACKTEST_ENABLED": {
         "title": "Backtest Enabled",
@@ -2489,6 +3793,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 10,
+        "help_key": "settings.backtest.BACKTEST_ENABLED",
+        "examples": [
+            "BACKTEST_ENABLED=true",
+            "BACKTEST_ENABLED=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：回测配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#回测功能",
+            },
+        ],
+        "warning_codes": [],
     },
     "BACKTEST_EVAL_WINDOW_DAYS": {
         "title": "Backtest Eval Window Days",
@@ -2503,6 +3819,19 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 1, "max": 365},
         "display_order": 20,
+        "help_key": "settings.backtest.eval_params",
+        "examples": [
+            "BACKTEST_EVAL_WINDOW_DAYS=10",
+            "BACKTEST_MIN_AGE_DAYS=14",
+            "BACKTEST_NEUTRAL_BAND_PCT=2.0",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：回测配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#回测功能",
+            },
+        ],
+        "warning_codes": [],
     },
     "BACKTEST_MIN_AGE_DAYS": {
         "title": "Backtest Min Age Days",
@@ -2517,6 +3846,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 0, "max": 3650},
         "display_order": 30,
+        "help_key": "settings.backtest.eval_params",
+        "examples": [
+            "BACKTEST_MIN_AGE_DAYS=14",
+            "BACKTEST_EVAL_WINDOW_DAYS=10",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：回测配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#回测功能",
+            },
+        ],
+        "warning_codes": [],
     },
     "BACKTEST_ENGINE_VERSION": {
         "title": "Backtest Engine Version",
@@ -2531,6 +3872,17 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 40,
+        "help_key": "settings.backtest.BACKTEST_ENGINE_VERSION",
+        "examples": [
+            "BACKTEST_ENGINE_VERSION=v1",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：回测配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#回测功能",
+            },
+        ],
+        "warning_codes": [],
     },
     "BACKTEST_NEUTRAL_BAND_PCT": {
         "title": "Backtest Neutral Band Pct",
@@ -2545,6 +3897,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 0.0, "max": 100.0},
         "display_order": 50,
+        "help_key": "settings.backtest.eval_params",
+        "examples": [
+            "BACKTEST_NEUTRAL_BAND_PCT=2.0",
+            "BACKTEST_EVAL_WINDOW_DAYS=10",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：回测配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#回测功能",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_MODE": {
         "title": "Agent Mode",
@@ -2559,10 +3923,80 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 10,
+        "help_key": "settings.agent.AGENT_MODE",
+        "examples": [
+            "AGENT_MODE=true",
+            "AGENT_MODE=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "AGENT_BACKEND": {
+        "title": "Ask-Stock Backend",
+        "description": "Choose how the ask-stock Chat runs. Auto keeps the current default-model route.",
+        "category": "agent",
+        "data_type": "string",
+        "ui_control": "select",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "auto",
+        "options": [
+            {"label": "Auto (recommended)", "value": "auto"},
+            {"label": "Default model settings", "value": "litellm"},
+        ],
+        "validation": {"enum": ["auto", "litellm"]},
+        "display_order": 2,
+        "help_key": "settings.agent.AGENT_BACKEND",
+        "examples": [
+            "AGENT_BACKEND=auto",
+            "AGENT_BACKEND=litellm",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "AGENT_GENERATION_BACKEND": {
+        "title": "Ask-Stock Generation Method",
+        "description": "Generation method used by the ask-stock assistant to generate replies and use tools.",
+        "category": "agent",
+        "data_type": "string",
+        "ui_control": "select",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "auto",
+        "options": [
+            {"label": "Auto", "value": "auto"},
+            {"label": "Default model settings", "value": "litellm"},
+        ],
+        "validation": {"enum": ["auto", "litellm"]},
+        "display_order": 3,
+        "help_key": "settings.agent.AGENT_GENERATION_BACKEND",
+        "examples": [
+            "AGENT_GENERATION_BACKEND=auto",
+            "AGENT_GENERATION_BACKEND=litellm",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_MAX_STEPS": {
         "title": "Agent Max Steps",
-        "description": f"Maximum reasoning-step limit for Agent mode. At the default ({AGENT_MAX_STEPS_DEFAULT}), each sub-agent keeps its own preset. When raised above {AGENT_MAX_STEPS_DEFAULT}, all sub-agents adopt this value. When lowered below a sub-agent's preset, that sub-agent is capped at this value.",
+        "description": f"Maximum reasoning-step limit for the default-model Agent. At the default ({AGENT_MAX_STEPS_DEFAULT}), each default-model sub-agent keeps its own preset. When raised above {AGENT_MAX_STEPS_DEFAULT}, all sub-agents adopt this value. When lowered below a sub-agent's preset, that sub-agent is capped at this value.",
         "category": "agent",
         "data_type": "integer",
         "ui_control": "number",
@@ -2573,6 +4007,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 1, "max": 50},
         "display_order": 20,
+        "help_key": "settings.agent.AGENT_MAX_STEPS",
+        "examples": [
+            f"AGENT_MAX_STEPS={AGENT_MAX_STEPS_DEFAULT}",
+            "AGENT_MAX_STEPS=25",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_SKILLS": {
         "title": "Agent Strategies",
@@ -2587,6 +4033,19 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 30,
+        "help_key": "settings.agent.AGENT_SKILLS",
+        "examples": [
+            "AGENT_SKILLS=",
+            "AGENT_SKILLS=bull_trend,mean_reversion",
+            "AGENT_SKILLS=all",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_SKILL_DIR": {
         "title": "Agent Strategy Dir",
@@ -2601,6 +4060,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 40,
+        "help_key": "settings.agent.AGENT_SKILL_DIR",
+        "examples": [
+            "AGENT_SKILL_DIR=strategies",
+            "AGENT_SKILL_DIR=my_strategies",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_NL_ROUTING": {
         "title": "Agent NL Routing",
@@ -2615,6 +4086,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 50,
+        "help_key": "settings.agent.AGENT_NL_ROUTING",
+        "examples": [
+            "AGENT_NL_ROUTING=true",
+            "AGENT_NL_ROUTING=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_ARCH": {
         "title": "Agent Architecture",
@@ -2632,6 +4115,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "validation": {},
         "display_order": 60,
+        "help_key": "settings.agent.AGENT_ARCH",
+        "examples": [
+            "AGENT_ARCH=single",
+            "AGENT_ARCH=multi",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_ORCHESTRATOR_MODE": {
         "title": "Orchestrator Mode",
@@ -2651,10 +4146,22 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "validation": {"enum": ["quick", "standard", "full", "specialist", "strategy", "skill"]},
         "display_order": 61,
+        "help_key": "settings.agent.AGENT_ORCHESTRATOR_MODE",
+        "examples": [
+            "AGENT_ORCHESTRATOR_MODE=standard",
+            "AGENT_ORCHESTRATOR_MODE=full",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_ORCHESTRATOR_TIMEOUT_S": {
         "title": "Agent Timeout",
-        "description": "Shared timeout budget in seconds for Agent execution. Single-agent runs use it as the overall ReAct loop budget; multi-agent mode uses it as the cooperative pipeline budget. Set to 0 to disable.",
+        "description": "Shared timeout budget in seconds for Agent execution. Single-agent runs use it as the overall ReAct loop budget; multi-agent mode uses it as the cooperative pipeline budget. Set to 0 to disable the timeout.",
         "category": "agent",
         "data_type": "integer",
         "ui_control": "number",
@@ -2665,6 +4172,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 0, "max": 3600},
         "display_order": 62,
+        "help_key": "settings.agent.AGENT_ORCHESTRATOR_TIMEOUT_S",
+        "examples": [
+            "AGENT_ORCHESTRATOR_TIMEOUT_S=600",
+            "AGENT_ORCHESTRATOR_TIMEOUT_S=0",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_RISK_OVERRIDE": {
         "title": "Risk Agent Override",
@@ -2679,6 +4198,44 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 63,
+        "help_key": "settings.agent.AGENT_RISK_OVERRIDE",
+        "examples": [
+            "AGENT_RISK_OVERRIDE=true",
+            "AGENT_RISK_OVERRIDE=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "AGENT_SKILL_CONCURRENCY": {
+        "title": "Strategy Skill Concurrency",
+        "description": "Maximum number of specialist strategy-skill agents to run concurrently in specialist mode.",
+        "category": "agent",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "3",
+        "options": [],
+        "validation": {"min": 1, "max": 4},
+        "display_order": 64,
+        "help_key": "settings.agent.AGENT_SKILL_CONCURRENCY",
+        "examples": [
+            "AGENT_SKILL_CONCURRENCY=3",
+            "AGENT_SKILL_CONCURRENCY=4",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_DEEP_RESEARCH_BUDGET": {
         "title": "Deep Research Token Budget",
@@ -2693,6 +4250,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 5000, "max": 100000},
         "display_order": 64,
+        "help_key": "settings.agent.DEEP_RESEARCH",
+        "examples": [
+            "AGENT_DEEP_RESEARCH_BUDGET=30000",
+            "AGENT_DEEP_RESEARCH_BUDGET=50000",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_DEEP_RESEARCH_TIMEOUT": {
         "title": "Deep Research Timeout",
@@ -2707,6 +4276,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 30, "max": 600},
         "display_order": 65,
+        "help_key": "settings.agent.DEEP_RESEARCH",
+        "examples": [
+            "AGENT_DEEP_RESEARCH_TIMEOUT=180",
+            "AGENT_DEEP_RESEARCH_TIMEOUT=300",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_MEMORY_ENABLED": {
         "title": "Agent Memory",
@@ -2721,10 +4302,22 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 66,
+        "help_key": "settings.agent.AGENT_MEMORY_ENABLED",
+        "examples": [
+            "AGENT_MEMORY_ENABLED=true",
+            "AGENT_MEMORY_ENABLED=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_SKILL_AUTOWEIGHT": {
         "title": "Auto-Weight Strategies",
-        "description": "Automatically weight strategy-skill opinions by their historical backtest performance.",
+        "description": "Conservatively weight strategy-skill opinions from sufficient attributable Outcome samples.",
         "category": "agent",
         "data_type": "boolean",
         "ui_control": "switch",
@@ -2735,6 +4328,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 67,
+        "help_key": "settings.agent.AGENT_SKILL_AUTOWEIGHT",
+        "examples": [
+            "AGENT_SKILL_AUTOWEIGHT=true",
+            "AGENT_SKILL_AUTOWEIGHT=false",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_SKILL_ROUTING": {
         "title": "Strategy Routing",
@@ -2752,6 +4357,143 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         ],
         "validation": {},
         "display_order": 68,
+        "help_key": "settings.agent.AGENT_SKILL_ROUTING",
+        "examples": [
+            "AGENT_SKILL_ROUTING=auto",
+            "AGENT_SKILL_ROUTING=manual",
+        ],
+        "docs": [
+            {
+                "label": "完整指南：Agent 配置",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "AGENT_CONTEXT_COMPRESSION_ENABLED": {
+        "title": "Agent Context Compression",
+        "description": "Enable rolling compression of visible Agent chat history. Default is off to preserve existing behavior.",
+        "category": "agent",
+        "data_type": "boolean",
+        "ui_control": "switch",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "false",
+        "options": [],
+        "validation": {},
+        "display_order": 72,
+        "help_key": "settings.agent.context_compression",
+        "examples": [
+            "AGENT_CONTEXT_COMPRESSION_ENABLED=false",
+            "AGENT_CONTEXT_COMPRESSION_ENABLED=true",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南：问股可见对话上下文压缩",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md#问股可见对话上下文压缩",
+            },
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "AGENT_CONTEXT_COMPRESSION_PROFILE": {
+        "title": "Context Compression Profile",
+        "description": "Preset for visible chat history compression. Trigger/protected-turn fields can be left empty to follow the selected profile.",
+        "category": "agent",
+        "data_type": "string",
+        "ui_control": "select",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "balanced",
+        "options": [
+            {"label": "成本优先", "value": "cost"},
+            {"label": "均衡推荐", "value": "balanced"},
+            {"label": "长上下文原文优先", "value": "long_context_raw_first"},
+        ],
+        "validation": {"enum": list(AGENT_CONTEXT_COMPRESSION_PROFILES.keys())},
+        "display_order": 73,
+        "help_key": "settings.agent.context_compression",
+        "examples": [
+            "AGENT_CONTEXT_COMPRESSION_PROFILE=balanced",
+            "AGENT_CONTEXT_COMPRESSION_PROFILE=cost",
+            "AGENT_CONTEXT_COMPRESSION_PROFILE=long_context_raw_first",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南：问股可见对话上下文压缩",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md#问股可见对话上下文压缩",
+            },
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS": {
+        "title": "Context Compression Trigger Tokens",
+        "description": "Token threshold for visible chat history compression. Leave empty to follow the selected compression profile preset.",
+        "category": "agent",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "",
+        "options": [],
+        "validation": {"min": 1000, "max": 200000},
+        "display_order": 74,
+        "help_key": "settings.agent.context_compression",
+        "examples": [
+            "AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS=",
+            "AGENT_CONTEXT_COMPRESSION_TRIGGER_TOKENS=12000",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南：问股可见对话上下文压缩",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md#问股可见对话上下文压缩",
+            },
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
+    },
+    "AGENT_CONTEXT_PROTECTED_TURNS": {
+        "title": "Context Protected Turns",
+        "description": "Recent user turns preserved verbatim during visible chat history compression. Leave empty to follow the selected compression profile preset.",
+        "category": "agent",
+        "data_type": "integer",
+        "ui_control": "number",
+        "is_sensitive": False,
+        "is_required": False,
+        "is_editable": True,
+        "default_value": "",
+        "options": [],
+        "validation": {"min": 1, "max": 20},
+        "display_order": 75,
+        "help_key": "settings.agent.context_compression",
+        "examples": [
+            "AGENT_CONTEXT_PROTECTED_TURNS=",
+            "AGENT_CONTEXT_PROTECTED_TURNS=4",
+        ],
+        "docs": [
+            {
+                "label": "LLM 配置指南：问股可见对话上下文压缩",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md#问股可见对话上下文压缩",
+            },
+            {
+                "label": "完整指南：环境变量完整列表",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_EVENT_MONITOR_ENABLED": {
         "title": "Event Monitor",
@@ -2766,6 +4508,18 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 69,
+        "help_key": "settings.agent.event_monitor",
+        "examples": [
+            "AGENT_EVENT_MONITOR_ENABLED=true",
+            "AGENT_EVENT_MONITOR_INTERVAL_MINUTES=5",
+        ],
+        "docs": [
+            {
+                "label": "告警中心文档",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/alerts.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_EVENT_MONITOR_INTERVAL_MINUTES": {
         "title": "Event Monitor Interval",
@@ -2780,12 +4534,26 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {"min": 1, "max": 1440},
         "display_order": 70,
+        "help_key": "settings.agent.event_monitor",
+        "examples": [
+            "AGENT_EVENT_MONITOR_INTERVAL_MINUTES=5",
+            "AGENT_EVENT_MONITOR_INTERVAL_MINUTES=15",
+        ],
+        "docs": [
+            {
+                "label": "告警中心文档",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/alerts.md",
+            },
+        ],
+        "warning_codes": [],
     },
     "AGENT_EVENT_ALERT_RULES_JSON": {
         "title": "Event Alert Rules",
         "description": (
             "JSON array of Event Monitor rules loaded by schedule mode. "
-            "Supported alert_type values: price_cross, price_change_percent, volume_spike."
+            "Legacy JSON supports only price_cross, price_change_percent, and volume_spike. "
+            "Technical indicator, watchlist, portfolio, and market light alert rules "
+            "are available through the Alert API/Web center."
         ),
         "category": "agent",
         "data_type": "json",
@@ -2797,6 +4565,533 @@ _FIELD_DEFINITIONS: Dict[str, Dict[str, Any]] = {
         "options": [],
         "validation": {},
         "display_order": 71,
+        "help_key": "settings.agent.EVENT_ALERT_RULES_JSON",
+        "examples": [
+            'AGENT_EVENT_ALERT_RULES_JSON=[{"alert_type":"price_cross","stock_code":"600519","direction":"above","price":1800}]',
+            'AGENT_EVENT_ALERT_RULES_JSON=[{"alert_type":"volume_spike","stock_code":"300750","multiplier":2.5}]',
+        ],
+        "docs": [
+            {
+                "label": "告警中心文档",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/alerts.md",
+            },
+        ],
+        "warning_codes": ["legacy_json_only_basic_rules"],
+    },
+}
+
+_DOC_FULL_GUIDE_ENV = [
+    {
+        "label": "完整指南：环境变量完整列表",
+        "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#环境变量完整列表",
+    },
+]
+
+_DOC_FULL_GUIDE_SEARCH = [
+    {
+        "label": "完整指南：搜索服务配置",
+        "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#搜索服务配置",
+    },
+]
+
+_DOC_FULL_GUIDE_DATA_SOURCE = [
+    {
+        "label": "完整指南：数据源配置",
+        "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#数据源配置",
+    },
+]
+
+_DOC_FULL_GUIDE_NOTIFICATION = [
+    {
+        "label": "完整指南：通知渠道配置",
+        "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#通知渠道详细配置",
+    },
+]
+
+_DOC_LLM_CONFIG = [
+    {
+        "label": "LLM 配置指南",
+        "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/LLM_CONFIG_GUIDE.md",
+    },
+    {
+        "label": "LLM 服务商配置速查",
+        "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/llm-providers.md",
+    },
+]
+
+_DOC_CUSTOM_WEBHOOK = [
+    {
+        "label": "完整指南：自定义 Webhook",
+        "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/full-guide.md#自定义-webhook",
+    },
+]
+
+_FIELD_HELP_METADATA: Dict[str, Dict[str, Any]] = {
+    "ANSPIRE_LLM_ENABLED": {
+        "help_key": "settings.ai_model.anspire_llm",
+        "examples": [
+            "ANSPIRE_LLM_ENABLED=true",
+            "ANSPIRE_API_KEYS=your_anspire_key",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": [],
+    },
+    "ANSPIRE_LLM_BASE_URL": {
+        "help_key": "settings.ai_model.anspire_llm",
+        "examples": [
+            "ANSPIRE_LLM_BASE_URL=https://open-gateway.anspire.cn/v6",
+            "ANSPIRE_LLM_BASE_URL=https://open-gateway.anspire.ai/v6",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["base_url_must_match_provider"],
+    },
+    "ANSPIRE_LLM_MODEL": {
+        "help_key": "settings.ai_model.anspire_llm",
+        "examples": [
+            "ANSPIRE_LLM_MODEL=Doubao-Seed-2.0-lite",
+            "LITELLM_MODEL=openai/Doubao-Seed-2.0-lite",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": [],
+    },
+    "DEEPSEEK_API_KEYS": {
+        "help_key": "settings.ai_model.provider_keys",
+        "examples": [
+            "DEEPSEEK_API_KEYS=sk-xxxx,sk-yyyy",
+            "LITELLM_MODEL=deepseek/deepseek-v4-flash",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["secret_value", "comma_separated_keys"],
+    },
+    "GEMINI_API_KEYS": {
+        "help_key": "settings.ai_model.provider_keys",
+        "examples": [
+            "GEMINI_API_KEYS=your_gemini_key_1,your_gemini_key_2",
+            "LITELLM_MODEL=gemini/gemini-3.1-pro-preview",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["secret_value", "comma_separated_keys"],
+    },
+    "GEMINI_MODEL": {
+        "help_key": "settings.ai_model.legacy_provider_params",
+        "examples": [
+            "GEMINI_MODEL=gemini-3.1-pro-preview",
+            "LITELLM_MODEL=gemini/gemini-3.1-pro-preview",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["legacy_provider_setting"],
+    },
+    "GEMINI_MODEL_FALLBACK": {
+        "help_key": "settings.ai_model.legacy_provider_params",
+        "examples": [
+            "GEMINI_MODEL_FALLBACK=gemini-3-flash-preview",
+            "LITELLM_FALLBACK_MODELS=gemini/gemini-3-flash-preview",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["legacy_provider_setting"],
+    },
+    "GEMINI_TEMPERATURE": {
+        "help_key": "settings.ai_model.legacy_provider_params",
+        "examples": [
+            "GEMINI_TEMPERATURE=0.7",
+            "LLM_TEMPERATURE=0.7",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["legacy_provider_setting"],
+    },
+    "OPENAI_API_KEYS": {
+        "help_key": "settings.ai_model.provider_keys",
+        "examples": [
+            "OPENAI_API_KEYS=sk-xxxx,sk-yyyy",
+            "OPENAI_BASE_URL=https://api.example.com/v1",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["secret_value", "comma_separated_keys"],
+    },
+    "OPENAI_MODEL": {
+        "help_key": "settings.ai_model.legacy_provider_params",
+        "examples": [
+            "OPENAI_MODEL=gpt-5.5",
+            "LITELLM_MODEL=openai/gpt-5.5",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["legacy_provider_setting"],
+    },
+    "OPENAI_VISION_MODEL": {
+        "help_key": "settings.ai_model.legacy_provider_params",
+        "examples": [
+            "OPENAI_VISION_MODEL=gpt-5.5",
+            "VISION_MODEL=openai/gpt-5.5",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["legacy_provider_setting"],
+    },
+    "OPENAI_TEMPERATURE": {
+        "help_key": "settings.ai_model.legacy_provider_params",
+        "examples": [
+            "OPENAI_TEMPERATURE=0.7",
+            "LLM_TEMPERATURE=0.7",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["legacy_provider_setting"],
+    },
+    "ANTHROPIC_API_KEYS": {
+        "help_key": "settings.ai_model.provider_keys",
+        "examples": [
+            "ANTHROPIC_API_KEYS=sk-ant-xxxx,sk-ant-yyyy",
+            "LITELLM_MODEL=anthropic/claude-sonnet-4-6",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["secret_value", "comma_separated_keys"],
+    },
+    "ANTHROPIC_MODEL": {
+        "help_key": "settings.ai_model.legacy_provider_params",
+        "examples": [
+            "ANTHROPIC_MODEL=claude-sonnet-4-6",
+            "LITELLM_MODEL=anthropic/claude-sonnet-4-6",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["legacy_provider_setting"],
+    },
+    "ANTHROPIC_TEMPERATURE": {
+        "help_key": "settings.ai_model.legacy_provider_params",
+        "examples": [
+            "ANTHROPIC_TEMPERATURE=0.7",
+            "LLM_TEMPERATURE=0.7",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["legacy_provider_setting"],
+    },
+    "ANTHROPIC_MAX_TOKENS": {
+        "help_key": "settings.ai_model.legacy_provider_params",
+        "examples": [
+            "ANTHROPIC_MAX_TOKENS=8192",
+        ],
+        "docs": _DOC_LLM_CONFIG,
+        "warning_codes": ["legacy_provider_setting"],
+    },
+    "TICKFLOW_API_KEY": {
+        "help_key": "settings.data_source.TICKFLOW_API_KEY",
+        "examples": [
+            "TICKFLOW_API_KEY=your_tickflow_key",
+        ],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+        "warning_codes": ["secret_value"],
+    },
+    "TICKFLOW_PRIORITY": {
+        "help_key": "settings.data_source.TICKFLOW_PRIORITY",
+        "examples": ["TICKFLOW_PRIORITY=2"],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+    },
+    "MX_APIKEY": {
+        "help_key": "settings.data_source.MX_APIKEY",
+        "examples": [
+            "MX_APIKEY=mkt_your_miaoxiang_key",
+        ],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+        "warning_codes": ["secret_value"],
+    },
+    "MX_PRIORITY": {
+        "help_key": "settings.data_source.MX_PRIORITY",
+        "examples": ["MX_PRIORITY=6"],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+    },
+    "TICKFLOW_KLINE_ADJUST": {
+        "help_key": "settings.data_source.TICKFLOW_KLINE_ADJUST",
+        "examples": ["TICKFLOW_KLINE_ADJUST=none"],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+    },
+    "TICKFLOW_BATCH_DAILY_ENABLED": {
+        "help_key": "settings.data_source.TICKFLOW_BATCH_DAILY_ENABLED",
+        "examples": ["TICKFLOW_BATCH_DAILY_ENABLED=true"],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+    },
+    "TICKFLOW_BATCH_SIZE": {
+        "help_key": "settings.data_source.TICKFLOW_BATCH_SIZE",
+        "examples": ["TICKFLOW_BATCH_SIZE=100"],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+    },
+    "SERPAPI_API_KEYS": {
+        "help_key": "settings.data_source.search_api_keys",
+        "examples": [
+            "SERPAPI_API_KEYS=serpapi_key_1,serpapi_key_2",
+        ],
+        "docs": _DOC_FULL_GUIDE_SEARCH,
+        "warning_codes": ["secret_value", "comma_separated_keys"],
+    },
+    "BRAVE_API_KEYS": {
+        "help_key": "settings.data_source.search_api_keys",
+        "examples": [
+            "BRAVE_API_KEYS=brave_key_1,brave_key_2",
+        ],
+        "docs": _DOC_FULL_GUIDE_SEARCH,
+        "warning_codes": ["secret_value", "comma_separated_keys"],
+    },
+    "BOCHA_API_KEYS": {
+        "help_key": "settings.data_source.search_api_keys",
+        "examples": [
+            "BOCHA_API_KEYS=bocha_key_1,bocha_key_2",
+        ],
+        "docs": _DOC_FULL_GUIDE_SEARCH,
+        "warning_codes": ["secret_value", "comma_separated_keys"],
+    },
+    "MINIMAX_API_KEYS": {
+        "help_key": "settings.data_source.search_api_keys",
+        "examples": [
+            "MINIMAX_API_KEYS=minimax_key_1,minimax_key_2",
+        ],
+        "docs": _DOC_FULL_GUIDE_SEARCH,
+        "warning_codes": ["secret_value", "comma_separated_keys"],
+    },
+    "SEARXNG_PUBLIC_INSTANCES_ENABLED": {
+        "help_key": "settings.data_source.SEARXNG_BASE_URLS",
+        "examples": [
+            "SEARXNG_PUBLIC_INSTANCES_ENABLED=false",
+            "SEARXNG_PUBLIC_INSTANCES_ENABLED=true",
+        ],
+        "docs": _DOC_FULL_GUIDE_SEARCH,
+        "warning_codes": ["public_instance_stability"],
+    },
+    "BIAS_THRESHOLD": {
+        "help_key": "settings.data_source.BIAS_THRESHOLD",
+        "examples": [
+            "BIAS_THRESHOLD=5.0",
+            "BIAS_THRESHOLD=8.0",
+        ],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+        "warning_codes": [],
+    },
+    "PYTDX_HOST": {
+        "help_key": "settings.data_source.pytdx",
+        "examples": [
+            "PYTDX_HOST=119.147.212.81",
+            "PYTDX_PORT=7709",
+        ],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+        "warning_codes": [],
+    },
+    "PYTDX_PORT": {
+        "help_key": "settings.data_source.pytdx",
+        "examples": [
+            "PYTDX_PORT=7709",
+            "PYTDX_HOST=119.147.212.81",
+        ],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+        "warning_codes": [],
+    },
+    "PYTDX_SERVERS": {
+        "help_key": "settings.data_source.pytdx",
+        "examples": [
+            "PYTDX_SERVERS=119.147.212.81:7709,119.147.212.81:7711",
+        ],
+        "docs": _DOC_FULL_GUIDE_DATA_SOURCE,
+        "warning_codes": ["overrides_pytdx_host_port"],
+    },
+    "DINGTALK_APP_KEY": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "DINGTALK_APP_KEY=your_dingtalk_app_key",
+            "DINGTALK_APP_SECRET=your_dingtalk_app_secret",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value"],
+    },
+    "DINGTALK_APP_SECRET": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "DINGTALK_APP_SECRET=your_dingtalk_app_secret",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value"],
+    },
+    "PUSHPLUS_TOKEN": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "PUSHPLUS_TOKEN=your_pushplus_token",
+            "PUSHPLUS_TOPIC=your_pushplus_topic",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value"],
+    },
+    "CUSTOM_WEBHOOK_BEARER_TOKEN": {
+        "help_key": "settings.notification.CUSTOM_WEBHOOK_URLS",
+        "examples": [
+            "CUSTOM_WEBHOOK_BEARER_TOKEN=your_bearer_token",
+        ],
+        "docs": _DOC_CUSTOM_WEBHOOK,
+        "warning_codes": ["secret_value"],
+    },
+    "CUSTOM_WEBHOOK_BODY_TEMPLATE": {
+        "help_key": "settings.notification.CUSTOM_WEBHOOK_URLS",
+        "examples": [
+            'CUSTOM_WEBHOOK_BODY_TEMPLATE={"msg_type":"text","content":$content_json}',
+            'CUSTOM_WEBHOOK_BODY_TEMPLATE={"title":$title_json,"text":$content_json}',
+        ],
+        "docs": _DOC_CUSTOM_WEBHOOK,
+        "warning_codes": ["json_template_must_render_object"],
+    },
+    "FEISHU_WEBHOOK_SECRET": {
+        "help_key": "settings.notification.FEISHU_WEBHOOK_URL",
+        "examples": [
+            "FEISHU_WEBHOOK_SECRET=your_feishu_webhook_secret",
+        ],
+        "docs": [
+            *_DOC_FULL_GUIDE_NOTIFICATION,
+            {
+                "label": "飞书机器人配置专题",
+                "href": "https://github.com/ZhuLinsen/daily_stock_analysis/blob/main/docs/bot/feishu-bot-config.md",
+            },
+        ],
+        "warning_codes": ["secret_value"],
+    },
+    "FEISHU_WEBHOOK_KEYWORD": {
+        "help_key": "settings.notification.FEISHU_WEBHOOK_URL",
+        "examples": [
+            "FEISHU_WEBHOOK_KEYWORD=股票日报",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": [],
+    },
+    "FEISHU_APP_ID": {
+        "help_key": "settings.notification.FEISHU_WEBHOOK_URL",
+        "examples": [
+            "FEISHU_APP_ID=cli_xxxxx",
+            "FEISHU_APP_SECRET=your_feishu_app_secret",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["not_webhook_delivery"],
+    },
+    "FEISHU_APP_SECRET": {
+        "help_key": "settings.notification.FEISHU_WEBHOOK_URL",
+        "examples": [
+            "FEISHU_APP_SECRET=your_feishu_app_secret",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value", "not_webhook_delivery"],
+    },
+    "TELEGRAM_MESSAGE_THREAD_ID": {
+        "help_key": "settings.notification.telegram",
+        "examples": [
+            "TELEGRAM_MESSAGE_THREAD_ID=123",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": [],
+    },
+    "DISCORD_MAIN_CHANNEL_ID": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "DISCORD_MAIN_CHANNEL_ID=123456789012345678",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": [],
+    },
+    "DISCORD_INTERACTIONS_PUBLIC_KEY": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "DISCORD_INTERACTIONS_PUBLIC_KEY=your_discord_public_key",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": [],
+    },
+    "SLACK_CHANNEL_ID": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "SLACK_CHANNEL_ID=C0123456789",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": [],
+    },
+    "SLACK_WEBHOOK_URL": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx/yyy/zzz",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["webhook_secret_value"],
+    },
+    "PUSHOVER_USER_KEY": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "PUSHOVER_USER_KEY=your_pushover_user_key",
+            "PUSHOVER_API_TOKEN=your_pushover_api_token",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value"],
+    },
+    "PUSHOVER_API_TOKEN": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "PUSHOVER_API_TOKEN=your_pushover_api_token",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value"],
+    },
+    "NTFY_URL": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "NTFY_URL=https://ntfy.sh/your_topic",
+            "NTFY_TOKEN=your_ntfy_token",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["webhook_secret_value"],
+    },
+    "NTFY_TOKEN": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "NTFY_TOKEN=your_ntfy_token",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value"],
+    },
+    "GOTIFY_URL": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "GOTIFY_URL=https://gotify.example.com",
+            "GOTIFY_TOKEN=your_gotify_token",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["webhook_secret_value"],
+    },
+    "GOTIFY_TOKEN": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "GOTIFY_TOKEN=your_gotify_token",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value"],
+    },
+    "PUSHPLUS_TOPIC": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "PUSHPLUS_TOPIC=your_pushplus_topic",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": [],
+    },
+    "SERVERCHAN3_SENDKEY": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "SERVERCHAN3_SENDKEY=your_serverchan3_sendkey",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value"],
+    },
+    "ASTRBOT_URL": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "ASTRBOT_URL=https://astrbot.example.com/webhook",
+            "ASTRBOT_TOKEN=your_astrbot_token",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["webhook_secret_value"],
+    },
+    "ASTRBOT_TOKEN": {
+        "help_key": "settings.notification.chat_bots",
+        "examples": [
+            "ASTRBOT_TOKEN=your_astrbot_token",
+        ],
+        "docs": _DOC_FULL_GUIDE_NOTIFICATION,
+        "warning_codes": ["secret_value"],
     },
 }
 
@@ -2830,6 +5125,8 @@ def get_field_definition(key: str, value_hint: Optional[str] = None) -> Dict[str
     key_upper = key.upper()
     if key_upper in _FIELD_DEFINITIONS:
         field = deepcopy(_FIELD_DEFINITIONS[key_upper])
+        if key_upper in _FIELD_HELP_METADATA:
+            field.update(deepcopy(_FIELD_HELP_METADATA[key_upper]))
         field["key"] = key_upper
         validation = deepcopy(field.get("validation") or {})
         option_values = _extract_option_values(field.get("options", []))

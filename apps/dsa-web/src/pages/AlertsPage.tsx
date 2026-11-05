@@ -17,6 +17,7 @@ import type {
   AlertNotificationItem,
   AlertRuleCreateRequest,
   AlertRuleItem,
+  AlertRuleListResponse,
   AlertRuleTestResponse,
   AlertTriggerItem,
   AlertType,
@@ -40,6 +41,63 @@ function testVariant(result: AlertRuleTestResponse): 'success' | 'warning' | 'da
   return result.triggered ? 'success' : 'warning';
 }
 
+function renderTestResultMessage(result: AlertRuleTestResponse): React.ReactNode {
+  const targetResults = result.targetResults ?? [];
+  return (
+    <div className="space-y-2">
+      <div>
+        {result.message}
+        {' · 状态：'}
+        {result.status}
+        {' · 触发：'}
+        {result.triggered ? '是' : '否'}
+        {' · 观察值：'}
+        {result.observedValue == null ? '--' : String(result.observedValue)}
+      </div>
+      {result.evaluatedCount != null && result.evaluatedCount > 1 ? (
+        <div className="text-xs">
+          评估 {result.evaluatedCount} · 触发 {result.triggeredCount ?? 0} · 降级 {result.degradedCount ?? 0} · 跳过 {result.skippedCount ?? 0}
+        </div>
+      ) : null}
+      {targetResults.length > 1 ? (
+        <div className="grid gap-1 text-xs">
+          {targetResults.slice(0, 20).map((item) => (
+            <div key={`${item.target}-${item.status}`} className="flex flex-wrap justify-between gap-2">
+              <span>{item.displayTarget ?? item.target}</span>
+              <span>
+                {item.status}
+                {item.recordStatus ? ` / ${item.recordStatus}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+const notificationChannelLabel: Record<string, string> = {
+  __cooldown__: '业务冷却',
+  __cooldown_read_failed__: '冷却读取失败',
+  __noise_suppressed__: '通知降噪',
+  __no_channel__: '无可用渠道',
+  __dispatch__: '通知调度',
+  __context__: '会话渠道',
+};
+
+function formatNotificationChannel(channel: string): string {
+  return notificationChannelLabel[channel] ?? channel;
+}
+
+function formatNotificationStatus(notification: AlertNotificationItem): string {
+  if (notification.success) return '成功';
+  if (notification.errorCode === 'cooldown_active') return '冷却抑制';
+  if (notification.errorCode === 'cooldown_read_failed') return '冷却读取失败';
+  if (notification.errorCode === 'noise_suppressed') return '降噪抑制';
+  if (notification.errorCode === 'no_channel') return '无渠道';
+  return '失败';
+}
+
 const AlertsPage: React.FC = () => {
   useEffect(() => {
     document.title = '告警中心 - DSA';
@@ -47,12 +105,14 @@ const AlertsPage: React.FC = () => {
 
   const [rules, setRules] = useState<AlertRuleItem[]>([]);
   const [rulesTotal, setRulesTotal] = useState(0);
+  const [ruleSources, setRuleSources] = useState<AlertRuleListResponse['ruleSources']>(null);
   const [rulesPage, setRulesPage] = useState(1);
   const [enabledFilter, setEnabledFilter] = useState<AlertRuleEnabledFilter>('all');
   const [alertTypeFilter, setAlertTypeFilter] = useState<AlertTypeFilter>('all');
   const [rulesLoading, setRulesLoading] = useState(false);
   const [rulesError, setRulesError] = useState<ParsedApiError | null>(null);
   const [rulesLoaded, setRulesLoaded] = useState(false);
+  const [rulesRefreshKey, setRulesRefreshKey] = useState(0);
 
   const [triggers, setTriggers] = useState<AlertTriggerItem[]>([]);
   const [triggersLoading, setTriggersLoading] = useState(false);
@@ -69,11 +129,11 @@ const AlertsPage: React.FC = () => {
   const [testResult, setTestResult] = useState<AlertRuleTestResponse | null>(null);
   const rulesRequestIdRef = useRef(0);
 
-  const loadRules = useCallback(async (pageOverride?: number) => {
+  const loadRules = useCallback(async () => {
     const requestId = rulesRequestIdRef.current + 1;
     rulesRequestIdRef.current = requestId;
     const isLatestRequest = () => rulesRequestIdRef.current === requestId;
-    const requestedPage = pageOverride ?? rulesPage;
+    const requestedPage = rulesPage;
     const baseQuery = {
       enabled: enabledFilterToQuery(enabledFilter),
       alertType: alertTypeFilterToQuery(alertTypeFilter),
@@ -88,11 +148,10 @@ const AlertsPage: React.FC = () => {
         setRulesPage(lastPage);
         response = await alertsApi.listRules({ ...baseQuery, page: lastPage });
         if (!isLatestRequest()) return null;
-      } else if (pageOverride !== undefined && pageOverride !== rulesPage) {
-        setRulesPage(pageOverride);
       }
       setRules(response.items);
       setRulesTotal(response.total);
+      setRuleSources(response.ruleSources ?? null);
       setRulesError(null);
       setRulesLoaded(true);
       return response;
@@ -135,7 +194,7 @@ const AlertsPage: React.FC = () => {
 
   useEffect(() => {
     void loadRules();
-  }, [loadRules]);
+  }, [loadRules, rulesRefreshKey]);
 
   useEffect(() => {
     if (!rulesLoaded) return;
@@ -150,7 +209,8 @@ const AlertsPage: React.FC = () => {
     try {
       const created = await alertsApi.createRule(payload);
       setCreateSuccess(`已创建告警规则「${created.name}」`);
-      await loadRules(1);
+      setRulesPage(1);
+      setRulesRefreshKey((value) => value + 1);
       return true;
     } catch (error) {
       setCreateError(getParsedApiError(error));
@@ -168,7 +228,7 @@ const AlertsPage: React.FC = () => {
       } else {
         await alertsApi.enableRule(rule.id);
       }
-      await loadRules();
+      setRulesRefreshKey((value) => value + 1);
     } catch (error) {
       setRulesError(getParsedApiError(error));
     } finally {
@@ -180,7 +240,7 @@ const AlertsPage: React.FC = () => {
     setBusyRule({ id: rule.id, action: 'delete' });
     try {
       await alertsApi.deleteRule(rule.id);
-      await loadRules();
+      setRulesRefreshKey((value) => value + 1);
     } catch (error) {
       setRulesError(getParsedApiError(error));
     } finally {
@@ -206,7 +266,7 @@ const AlertsPage: React.FC = () => {
       <PageHeader
         eyebrow="Alert Center"
         title="告警中心"
-        description="管理现有三类事件告警规则，执行一次性测试，并查看后台评估任务记录的触发历史。"
+        description="管理事件告警、日线技术指标、自选股、持仓/账户联动和大盘红绿灯规则，执行一次性测试，并查看后台评估任务记录的触发历史。"
       />
 
       {createError ? <ApiErrorAlert error={createError} onDismiss={() => setCreateError(null)} /> : null}
@@ -223,6 +283,13 @@ const AlertsPage: React.FC = () => {
         />
       ) : null}
       {rulesError ? <ApiErrorAlert error={rulesError} onDismiss={() => setRulesError(null)} /> : null}
+      {!rulesError && ruleSources && ruleSources.legacyConfigured > 0 ? (
+        <InlineAlert
+          title="存在环境变量告警规则"
+          variant="warning"
+          message={`环境变量配置了 ${ruleSources.legacyConfigured} 条有效规则，按当前启用的页面规则去重后有 ${ruleSources.legacyEffective} 条可供后台轮询。此数量不受页面筛选影响，也不表示后台轮询已启动。页面仅管理数据库规则；删除或禁用页面规则不会停用环境规则。若需停用，请在部署配置中修改 AGENT_EVENT_ALERT_RULES_JSON 并重新加载配置。`}
+        />
+      ) : null}
 
       <div className="grid items-stretch gap-5 xl:grid-cols-[380px_minmax(0,1fr)]">
         <AlertRuleForm onSubmit={handleCreateRule} isSubmitting={createLoading} />
@@ -254,17 +321,7 @@ const AlertsPage: React.FC = () => {
             <InlineAlert
               title="测试结果"
               variant={testVariant(testResult)}
-              message={(
-                <span>
-                  {testResult.message}
-                  {' · 状态：'}
-                  {testResult.status}
-                  {' · 触发：'}
-                  {testResult.triggered ? '是' : '否'}
-                  {' · 观察值：'}
-                  {testResult.observedValue == null ? '--' : String(testResult.observedValue)}
-                </span>
-              )}
+              message={renderTestResultMessage(testResult)}
             />
           ) : null}
         </div>
@@ -299,8 +356,8 @@ const AlertsPage: React.FC = () => {
               <tbody className="divide-y divide-border/40">
                 {notifications.map((notification) => (
                   <tr key={notification.id}>
-                    <td className="px-3 py-3">{notification.channel}</td>
-                    <td className="px-3 py-3">{notification.success ? '成功' : '失败'}</td>
+                    <td className="px-3 py-3">{formatNotificationChannel(notification.channel)}</td>
+                    <td className="px-3 py-3">{formatNotificationStatus(notification)}</td>
                     <td className="px-3 py-3">{notification.errorCode ?? '--'}</td>
                     <td className="px-3 py-3">{notification.latencyMs == null ? '--' : `${notification.latencyMs}ms`}</td>
                     <td className="px-3 py-3">{formatDateTime(notification.createdAt)}</td>
