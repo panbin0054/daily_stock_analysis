@@ -7,41 +7,22 @@ import { UI_LANGUAGE_STORAGE_KEY } from './utils/uiLanguage';
 
 type AuthState = ReturnType<typeof AuthContext.useAuth>;
 
-const { chatPageShouldThrow, setCurrentRoute, useAgentChatStoreMock } = vi.hoisted(() => {
-  const setCurrentRoute = vi.fn();
-  const chatPageShouldThrow = { value: false };
-  const state = { completionBadge: false };
-  const useAgentChatStoreMock = Object.assign(
-    vi.fn((selector?: (value: typeof state) => unknown) => (selector ? selector(state) : state)),
-    { getState: () => ({ setCurrentRoute }) },
-  );
-  return { chatPageShouldThrow, setCurrentRoute, useAgentChatStoreMock };
-});
+const { routePageShouldThrow } = vi.hoisted(() => ({ routePageShouldThrow: { value: false } }));
 
 vi.mock('./contexts/AuthContext', () => ({
   AuthProvider: ({ children }: { children: ReactNode }) => children,
   useAuth: vi.fn(),
 }));
 
-vi.mock('./stores/agentChatStore', () => ({
-  useAgentChatStore: useAgentChatStoreMock,
-}));
-
 vi.mock('./pages/HomePage', () => ({
   default: () => <div data-testid="home-page">Home</div>,
 }));
 
-vi.mock('./pages/ChatPage', () => ({
-  default: () => {
-    if (chatPageShouldThrow.value) {
-      throw new Error('chunk load failed');
-    }
-    return <div data-testid="chat-page">Chat</div>;
-  },
-}));
-
 vi.mock('./pages/PortfolioPage', () => ({
-  default: () => <div data-testid="portfolio-page">Portfolio</div>,
+  default: () => {
+    if (routePageShouldThrow.value) throw new Error('chunk load failed');
+    return <div data-testid="portfolio-page">Portfolio</div>;
+  },
 }));
 
 vi.mock('./pages/DecisionSignalsPage', () => ({
@@ -95,7 +76,7 @@ function makeAuthState(overrides: Partial<AuthState> = {}): AuthState {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  chatPageShouldThrow.value = false;
+  routePageShouldThrow.value = false;
   window.history.pushState({}, '', '/');
   localStorage.setItem(UI_LANGUAGE_STORAGE_KEY, 'zh');
   vi.mocked(AuthContext.useAuth).mockReturnValue(makeAuthState());
@@ -126,12 +107,11 @@ describe('App routing behavior', () => {
   });
 
   it('renders the current route page after auth is ready', async () => {
-    window.history.pushState({}, '', '/chat');
+    window.history.pushState({}, '', '/portfolio');
 
     render(<App />);
 
-    expect(await screen.findByTestId('chat-page')).toBeInTheDocument();
-    expect(setCurrentRoute).toHaveBeenCalledWith('/chat');
+    expect(await screen.findByTestId('portfolio-page')).toBeInTheDocument();
     expect(screen.queryByTestId('login-page')).not.toBeInTheDocument();
     expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
   });
@@ -201,19 +181,16 @@ describe('App routing behavior', () => {
     render(<App />);
 
     expect(await screen.findByTestId('token-usage-page')).toBeInTheDocument();
-    expect(setCurrentRoute).toHaveBeenCalledWith('/usage');
     expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
   });
 
-  it('routes /decision-signals to the AI signals page after auth is ready', async () => {
-    window.history.pushState({}, '', '/decision-signals');
-
-    render(<App />);
-
-    expect(await screen.findByTestId('decision-signals-page')).toBeInTheDocument();
-    expect(setCurrentRoute).toHaveBeenCalledWith('/decision-signals');
-    expect(screen.queryByTestId('home-page')).not.toBeInTheDocument();
-  });
+  it.each(['/chat', '/screening', '/decision-signals', '/backtest'])(
+    'does not expose the removed route %s', async (path) => {
+      window.history.pushState({}, '', path);
+      render(<App />);
+      expect(await screen.findByTestId('not-found-page')).toBeInTheDocument();
+    },
+  );
 
   it('routes /data to the data capability page after auth is ready', async () => {
     window.history.pushState({}, '', '/data');
@@ -221,7 +198,6 @@ describe('App routing behavior', () => {
     render(<App />);
 
     expect(await screen.findByTestId('data-center-page')).toBeInTheDocument();
-    expect(setCurrentRoute).toHaveBeenCalledWith('/data');
   });
 
   it('redirects authenticated login visits back to the home page', async () => {
@@ -240,8 +216,8 @@ describe('App routing behavior', () => {
 
   it('keeps the shell mounted and resets the route boundary after page render errors', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    chatPageShouldThrow.value = true;
-    window.history.pushState({}, '', '/chat');
+    routePageShouldThrow.value = true;
+    window.history.pushState({}, '', '/portfolio');
 
     try {
       render(<App />);
@@ -251,10 +227,10 @@ describe('App routing behavior', () => {
       expect(screen.getByRole('button', { name: '重新加载页面' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: '返回首页' })).toBeInTheDocument();
 
-      chatPageShouldThrow.value = false;
-      fireEvent.click(screen.getByRole('link', { name: '持仓' }));
+      routePageShouldThrow.value = false;
+      fireEvent.click(screen.getByRole('link', { name: '首页' }));
 
-      expect(await screen.findByTestId('portfolio-page')).toBeInTheDocument();
+      expect(await screen.findByTestId('home-page')).toBeInTheDocument();
       expect(screen.queryByRole('heading', { name: '页面加载失败' })).not.toBeInTheDocument();
     } finally {
       consoleError.mockRestore();

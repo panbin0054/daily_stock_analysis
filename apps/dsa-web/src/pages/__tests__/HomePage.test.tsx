@@ -3013,7 +3013,7 @@ describe('HomePage', () => {
     expect(navigateMock).toHaveBeenCalledWith('/settings');
   });
 
-  it('navigates to chat with report context when asking a follow-up question', async () => {
+  it('does not offer follow-up chat for a report', async () => {
     vi.mocked(historyApi.getList).mockResolvedValue({
       total: 1,
       page: 1,
@@ -3028,12 +3028,8 @@ describe('HomePage', () => {
       </MemoryRouter>,
     );
 
-    const followUpButton = await screen.findByRole('button', { name: '追问 AI' });
-    fireEvent.click(followUpButton);
-
-    expect(navigateMock).toHaveBeenCalledWith(
-      '/chat?stock=600519&name=%E8%B4%B5%E5%B7%9E%E8%8C%85%E5%8F%B0&recordId=1',
-    );
+    await waitFor(() => expect(historyApi.getDetail).toHaveBeenCalled());
+    expect(screen.queryByRole('button', { name: '追问 AI' })).not.toBeInTheDocument();
   });
 
   it('opens and closes the mobile history drawer without changing dashboard styles', async () => {

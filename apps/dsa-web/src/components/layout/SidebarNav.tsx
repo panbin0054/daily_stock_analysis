@@ -1,14 +1,11 @@
 import React, { useState } from 'react';
-import { Activity, BarChart3, Bell, BriefcaseBusiness, Database, Gauge, Home, LogOut, MessageSquareQuote, Search, Settings2, TrendingUp } from 'lucide-react';
+import { BarChart3, Bell, BriefcaseBusiness, Database, Gauge, Home, LogOut, Settings2, TrendingUp } from 'lucide-react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
-import { useAgentChatStore } from '../../stores/agentChatStore';
 import { useUiLanguage } from '../../contexts/UiLanguageContext';
 import type { UiTextKey } from '../../i18n/uiText';
 import { cn } from '../../utils/cn';
 import { ConfirmDialog } from '../common/ConfirmDialog';
-import { StatusDot } from '../common/StatusDot';
-import { UiLanguageToggle } from '../i18n/UiLanguageToggle';
 import { ThemeToggle } from '../theme/ThemeToggle';
 
 type SidebarNavProps = {
@@ -23,17 +20,12 @@ type NavItem = {
   to: string;
   icon: React.ComponentType<{ className?: string }>;
   exact?: boolean;
-  badge?: 'completion';
 };
 
 const NAV_ITEMS: NavItem[] = [
   { key: 'home', labelKey: 'layout.nav.home', to: '/', icon: Home, exact: true },
-  { key: 'chat', labelKey: 'layout.nav.chat', to: '/chat', icon: MessageSquareQuote, badge: 'completion' },
-  { key: 'screening', labelKey: 'layout.nav.screening', to: '/screening', icon: Search },
   { key: 'portfolio', labelKey: 'layout.nav.portfolio', to: '/portfolio', icon: BriefcaseBusiness },
-  { key: 'decision-signals', labelKey: 'layout.nav.decisionSignals', to: '/decision-signals', icon: Activity },
   { key: 'new-highs', labelKey: 'layout.nav.newHighs', to: '/new-highs', icon: TrendingUp },
-  { key: 'backtest', labelKey: 'layout.nav.backtest', to: '/backtest', icon: BarChart3 },
   { key: 'alerts', labelKey: 'layout.nav.alerts', to: '/alerts', icon: Bell },
   { key: 'data', labelKey: 'layout.nav.dataCenter', to: '/data', icon: Database },
   { key: 'usage', labelKey: 'layout.nav.usage', to: '/usage', icon: Gauge },
@@ -44,7 +36,6 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
   const { authEnabled, logout } = useAuth();
   const location = useLocation();
   const { t } = useUiLanguage();
-  const completionBadge = useAgentChatStore((state) => state.completionBadge);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const isRail = variant === 'rail';
   const itemBaseClass = cn(
@@ -86,7 +77,7 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
       </div>
 
       <nav className={cn('flex flex-col gap-1.5', isRail ? 'min-h-0 overflow-y-auto' : 'flex-1')} aria-label={t('layout.mainNav')}>
-        {NAV_ITEMS.map(({ key, labelKey, to, icon: Icon, exact, badge }) => {
+        {NAV_ITEMS.map(({ key, labelKey, to, icon: Icon, exact }) => {
           const label = t(labelKey);
           return (
           <NavLink
@@ -107,17 +98,6 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
               <>
                 <Icon className={cn(itemIconClass, isActive ? 'text-[var(--nav-icon-active)]' : 'text-current')} />
                 {!collapsed ? <span className={itemLabelClass}>{label}</span> : null}
-                {badge === 'completion' && completionBadge ? (
-                  <StatusDot
-                    tone="info"
-                    data-testid="chat-completion-badge"
-                    className={cn(
-                      'absolute right-3 border-2 border-background shadow-[0_0_10px_var(--nav-indicator-shadow)]',
-                      collapsed ? 'right-2 top-2' : ''
-                    )}
-                    aria-label={t('layout.newChatMessage')}
-                  />
-                ) : null}
               </>
             )}
           </NavLink>
@@ -128,15 +108,6 @@ export const SidebarNav: React.FC<SidebarNavProps> = ({ collapsed = false, onNav
 
       <div className="mt-1.5 flex shrink-0 flex-col gap-1.5">
         <ThemeToggle
-          variant={isRail ? 'rail' : 'nav'}
-          collapsed={collapsed}
-          wrapperClassName="w-full"
-          triggerClassName={itemInteractiveClass}
-          triggerActiveClassName={itemActiveClass}
-          iconClassName={itemIconClass}
-          labelClassName={itemLabelClass}
-        />
-        <UiLanguageToggle
           variant={isRail ? 'rail' : 'nav'}
           collapsed={collapsed}
           wrapperClassName="w-full"

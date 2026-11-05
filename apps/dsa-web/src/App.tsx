@@ -1,5 +1,5 @@
 import type React from 'react';
-import { lazy, useEffect, useMemo } from 'react';
+import { lazy, useMemo } from 'react';
 import {
   Navigate,
   createBrowserRouter,
@@ -14,32 +14,23 @@ import {
 } from './components/layout/RouteBoundary';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { UiLanguageProvider, useUiLanguage } from './contexts/UiLanguageContext';
-import { useAgentChatStore } from './stores/agentChatStore';
 import { resolveLoginRedirect } from './utils/loginRedirect';
 import './App.css';
 
 const HomePage = lazy(() => import('./pages/HomePage'));
-const BacktestPage = lazy(() => import('./pages/BacktestPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
-const ChatPage = lazy(() => import('./pages/ChatPage'));
 const PortfolioPage = lazy(() => import('./pages/PortfolioPage'));
 const NewHighsPage = lazy(() => import('./pages/NewHighsPage'));
-const DecisionSignalsPage = lazy(() => import('./pages/DecisionSignalsPage'));
 const AlertsPage = lazy(() => import('./pages/AlertsPage'));
 const TokenUsagePage = lazy(() => import('./pages/TokenUsagePage'));
-const StockScreeningPage = lazy(() => import('./pages/StockScreeningPage'));
 const DataCenterPage = lazy(() => import('./pages/DataCenterPage'));
 
 const AppContent: React.FC = () => {
   const location = useLocation();
   const { authEnabled, loggedIn, isLoading, loadError, refreshStatus } = useAuth();
   const { t } = useUiLanguage();
-
-  useEffect(() => {
-    useAgentChatStore.getState().setCurrentRoute(location.pathname);
-  }, [location.pathname]);
 
   if (isLoading) {
     return <PageLoadingFallback />;
@@ -90,13 +81,9 @@ const AppContent: React.FC = () => {
 
 const routeChildren = [
   { path: '/', element: <HomePage /> },
-  { path: '/chat', element: <ChatPage /> },
   { path: '/portfolio', element: <PortfolioPage /> },
   { path: '/new-highs', element: <NewHighsPage /> },
-  { path: '/decision-signals', element: <DecisionSignalsPage /> },
-  { path: '/screening', element: <StockScreeningPage /> },
   { path: '/data', element: <DataCenterPage /> },
-  { path: '/backtest', element: <BacktestPage /> },
   { path: '/alerts', element: <AlertsPage /> },
   { path: '/usage', element: <TokenUsagePage /> },
   { path: '/settings', element: <SettingsPage /> },

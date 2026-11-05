@@ -8,8 +8,6 @@ const mockThemeToggle = vi.fn(({ collapsed }: { collapsed?: boolean }) => (
   <button type="button">{collapsed ? '切换主题(折叠)' : '切换主题'}</button>
 ));
 
-const completionBadgeState = { value: true };
-
 vi.mock('../../../contexts/AuthContext', () => ({
   useAuth: () => ({
     authEnabled: true,
@@ -17,44 +15,17 @@ vi.mock('../../../contexts/AuthContext', () => ({
   }),
 }));
 
-vi.mock('../../../stores/agentChatStore', () => ({
-  useAgentChatStore: (selector: (state: { completionBadge: boolean }) => unknown) =>
-    selector({ completionBadge: completionBadgeState.value }),
-}));
-
 vi.mock('../../theme/ThemeToggle', () => ({
   ThemeToggle: (props: { collapsed?: boolean }) => mockThemeToggle(props),
 }));
 
 describe('SidebarNav', () => {
-  it('keeps screening directly after chat without requiring configuration', () => {
+  it('shows only the requested navigation links', () => {
     render(<MemoryRouter initialEntries={['/']}><SidebarNav /></MemoryRouter>);
-
-    expect(screen.getByRole('link', { name: '选股' })).toHaveAttribute('href', '/screening');
     const hrefs = screen.getAllByRole('link').map((link) => link.getAttribute('href'));
-    expect(hrefs.slice(0, 5)).toEqual(['/', '/chat', '/screening', '/portfolio', '/decision-signals']);
-  });
-
-  it('shows the shared completion badge only when chat completion is pending', () => {
-    completionBadgeState.value = true;
-
-    const { rerender } = render(
-      <MemoryRouter initialEntries={['/chat']}>
-        <SidebarNav />
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByTestId('chat-completion-badge')).toBeInTheDocument();
-    expect(screen.getByLabelText('问股有新消息')).toBeInTheDocument();
-
-    completionBadgeState.value = false;
-    rerender(
-      <MemoryRouter initialEntries={['/chat']}>
-        <SidebarNav />
-      </MemoryRouter>,
-    );
-
-    expect(screen.queryByTestId('chat-completion-badge')).not.toBeInTheDocument();
+    expect(hrefs).toEqual(['/', '/portfolio', '/new-highs', '/alerts', '/data', '/usage', '/settings']);
+    expect(screen.getByRole('button', { name: '切换主题' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '退出' })).toBeInTheDocument();
   });
 
   it('renders the collapsed theme toggle variant when the sidebar is collapsed', () => {
@@ -80,18 +51,6 @@ describe('SidebarNav', () => {
     const alertsLink = screen.getByRole('link', { name: '告警' });
     expect(alertsLink).toHaveAttribute('href', '/alerts');
     expect(alertsLink).toHaveClass('font-medium');
-  });
-
-  it('renders the AI signals navigation item and marks it active', () => {
-    render(
-      <MemoryRouter initialEntries={['/decision-signals']}>
-        <SidebarNav />
-      </MemoryRouter>,
-    );
-
-    const signalsLink = screen.getByRole('link', { name: 'AI 建议' });
-    expect(signalsLink).toHaveAttribute('href', '/decision-signals');
-    expect(signalsLink).toHaveClass('font-medium');
   });
 
   it('renders the data center navigation item and marks it active', () => {
