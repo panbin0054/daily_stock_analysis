@@ -1,5 +1,5 @@
 from datetime import date
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.services.portfolio_risk_service import PortfolioRiskService
 from src.services.portfolio_service import PortfolioService
@@ -26,3 +26,16 @@ def test_etf_sector_uses_position_name_when_fund_data_unavailable():
     assert sectors["UNCLASSIFIED"]["market_value_base"] == 200
     assert result["coverage"]["classified_count"] == 1
     assert result["coverage"]["unclassified_count"] == 2
+
+
+def test_industry_lookup_retries_after_failure_and_caches_success():
+    service = PortfolioRiskService.__new__(PortfolioRiskService)
+    service._load_tushare_industry_map = MagicMock(side_effect=[{}, {"600160": "化工原料", "688795": "半导体"}])
+    with patch.object(PortfolioRiskService, "_tushare_industry_cache", None), \
+         patch.object(PortfolioRiskService, "_tushare_industry_retry_at", 0.0), \
+         patch("src.services.portfolio_risk_service.time.monotonic", side_effect=[100, 100, 120, 176, 176, 177]):
+        assert service._fetch_industry_from_tushare("600160") is None
+        assert service._fetch_industry_from_tushare("688795") is None
+        assert service._fetch_industry_from_tushare("600160") == "化工原料"
+        assert service._fetch_industry_from_tushare("688795") == "半导体"
+        assert service._load_tushare_industry_map.call_count == 2

@@ -4,12 +4,16 @@
 from __future__ import annotations
 
 import json
+import logging
+import time
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import Config, get_config
 from src.repositories.portfolio_repo import PortfolioRepository
 from src.services.portfolio_service import PortfolioService
+
+logger = logging.getLogger(__name__)
 
 
 class PortfolioRiskService:
@@ -318,12 +322,17 @@ class PortfolioRiskService:
     # ---- Sector data fetchers ----
 
     _tushare_industry_cache: Optional[Dict[str, str]] = None
+    _tushare_industry_retry_at: float = 0.0
 
     def _fetch_industry_from_tushare(self, symbol: str) -> Optional[str]:
         """Get industry from tushare stock_basic (A-shares, batch-cached)."""
-        if PortfolioRiskService._tushare_industry_cache is None:
-            PortfolioRiskService._tushare_industry_cache = self._load_tushare_industry_map()
-        return PortfolioRiskService._tushare_industry_cache.get(symbol)
+        if PortfolioRiskService._tushare_industry_cache is None and time.monotonic() >= PortfolioRiskService._tushare_industry_retry_at:
+            # A failed request must not poison the cache for the lifetime of the process.
+            PortfolioRiskService._tushare_industry_retry_at = time.monotonic() + 75
+            industries = self._load_tushare_industry_map()
+            if industries:
+                PortfolioRiskService._tushare_industry_cache = industries
+        return (PortfolioRiskService._tushare_industry_cache or {}).get(symbol)
 
     def _load_tushare_industry_map(self) -> Dict[str, str]:
         """Load full A-share industry mapping from tushare (one API call)."""
@@ -346,7 +355,8 @@ class PortfolioRiskService:
                     code = ts_code.split(".")[0]
                     result[code] = industry
             return result
-        except Exception:
+        except Exception as exc:
+            logger.warning("Tushare industry lookup failed; will retry later: %s", exc)
             return {}
 
     _tushare_etf_cache: Optional[Dict[str, str]] = None
