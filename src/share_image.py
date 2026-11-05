@@ -2048,6 +2048,7 @@ def build_share_image_html(
     generated_on: Optional[date] = None,
     structured_payload: Optional[Mapping[str, Any]] = None,
     branding: Optional[ShareImageBranding] = None,
+    include_footer_branding: bool = True,
 ) -> str:
     """Build a deterministic 1080px stock, market, or dashboard share poster.
 
@@ -2154,7 +2155,7 @@ def build_share_image_html(
     <header class="poster-header"><div class="brand"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><strong>DSA</strong><em>|</em> {_escape(_poster_text(language, "brand"))}</div><div class="meta"><span class="date-chip">{_escape(stamp)}</span></div></header>
     <section class="hero"><h1>{_escape(title)}{f'<span class="code">{_escape(data.code)}</span>' if report_kind == 'stock' and data.code else ''}</h1><p>{_escape(subtitle)}</p></section>
     {content}
-    {_footer(poster_branding, source_line, language)}
+    {_footer(poster_branding, source_line, language) if include_footer_branding else f'<div class="disclaimer">{_escape(_poster_text(language, "disclaimer"))}{_escape(source_line)}</div>'}
   </main>
 </body>
 </html>"""

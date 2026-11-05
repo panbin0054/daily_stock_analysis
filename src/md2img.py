@@ -71,6 +71,7 @@ def _markdown_to_image_playwright(
                 markdown_text,
                 structured_payload=structured_payload,
                 branding=branding,
+                include_footer_branding=False,
             ),
             encoding="utf-8",
         )
@@ -132,6 +133,7 @@ def _markdown_to_image_m2f(
                     markdown_text,
                     structured_payload=structured_payload,
                     branding=branding,
+                    include_footer_branding=False,
                 )
             )
 
@@ -183,6 +185,7 @@ def _markdown_to_image_wkhtml(
             markdown_text,
             structured_payload=structured_payload,
             branding=branding,
+            include_footer_branding=False,
         )
         options = {
             "format": "png",
