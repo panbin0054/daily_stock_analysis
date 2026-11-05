@@ -435,12 +435,12 @@ class PortfolioRiskService:
                 # 2. ETF: tushare fund_basic name → infer sector
                 if not sector_name:
                     sector_name = self._fetch_etf_sector(symbol)
-                # 3. efinance get_belong_board (fallback)
+                # Prefer the CSRC industry lookup before the slower board fallback.
+                if not sector_name and not self.portfolio_service._is_cn_etf_position(symbol=symbol, market=market):
+                    sector_name = self._fetch_baostock_industry(symbol)
                 if not sector_name:
                     boards = self._fetch_belong_boards(symbol)
                     sector_name = self._pick_primary_board_name(boards)
-                if not sector_name and not self.portfolio_service._is_cn_etf_position(symbol=symbol, market=market):
-                    sector_name = self._fetch_baostock_industry(symbol)
             elif market in ("hk", "hongkong", "hong_kong"):
                 sector_name = self._fetch_hk_sector(symbol)
         except Exception as exc:

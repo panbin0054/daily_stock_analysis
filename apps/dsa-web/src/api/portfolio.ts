@@ -151,6 +151,7 @@ export const portfolioApi = {
   async getRisk(query: SnapshotQuery = {}): Promise<PortfolioRiskResponse> {
     const response = await apiClient.get<Record<string, unknown>>('/api/v1/portfolio/risk', {
       params: buildSnapshotParams(query),
+      timeout: 90000,
     });
     return toCamelCase<PortfolioRiskResponse>(response.data);
   },

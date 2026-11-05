@@ -550,8 +550,9 @@ class PortfolioPr2TestCase(unittest.TestCase):
         self.assertTrue(len(sectors) >= 1)
         self.assertEqual(sectors[0]["sector"], "UNCLASSIFIED")
 
+    @patch.object(PortfolioRiskService, "_fetch_baostock_industry", return_value=None)
     @patch.object(PortfolioRiskService, "_fetch_belong_boards", return_value=[{"name": "白酒", "type": "行业"}])
-    def test_sector_concentration_cn_board_mapping(self, _mock_fetch) -> None:
+    def test_sector_concentration_cn_board_mapping(self, _mock_fetch, _mock_baostock) -> None:
         account = self.service.create_account(name="Main", broker="Demo", market="cn", base_currency="CNY")
         aid = account["id"]
         self.service.record_cash_ledger(

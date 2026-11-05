@@ -54,3 +54,4 @@ def test_stock_uses_baostock_when_other_industry_sources_fail():
     sector = service._resolve_primary_sector(symbol="600160", market="cn", name="巨化股份", board_cache={}, coverage=coverage, errors=[])
     assert sector == "证监会：C26化学原料和化学制品制造业"
     assert coverage["classified_count"] == 1
+    service._fetch_belong_boards.assert_not_called()
