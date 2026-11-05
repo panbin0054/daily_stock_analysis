@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+- [改进] 持仓无结构化 AI 建议时展示匹配的历史报告建议及日期，并明确提示其非实时；没有报告时提示重新分析。
 - [修复] 持仓明细补齐名称表头，并优化表格列对齐和横向滚动展示。
 
 - [改进] 简化 Web 导航，仅保留首页、持仓、创新高、告警、数据中心、用量、设置、主题和退出。

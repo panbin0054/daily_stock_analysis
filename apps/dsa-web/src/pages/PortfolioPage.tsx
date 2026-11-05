@@ -3,8 +3,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Layers3, ShieldCheck } from 'lucide-react';
 import { Pie, PieChart, ResponsiveContainer, Tooltip, Legend, Cell } from 'recharts';
 import { decisionSignalsApi } from '../api/decisionSignals';
+import { historyApi } from '../api/history';
 import { portfolioApi } from '../api/portfolio';
 import type { ParsedApiError } from '../api/error';
+import type { HistoryItem } from '../types/analysis';
 import { getParsedApiError } from '../api/error';
 import { ApiErrorAlert, Card, Badge, ConfirmDialog, EmptyState, InlineAlert, StatusDot } from '../components/common';
 import { PortfolioSignalSummary } from '../components/decision-signals/DecisionSignalDisplay';
@@ -80,6 +82,7 @@ type PortfolioSignalLookup = {
 type PortfolioSignalLookupResult = {
   items: DecisionSignalItem[];
   error: string | null;
+  history?: { key: string; item: HistoryItem };
 };
 
 type PortfolioPageLanguage = 'zh' | 'en';
@@ -615,6 +618,15 @@ async function loadPortfolioSignalLookup(lookup: PortfolioSignalLookup): Promise
       market: lookup.market,
       limit: 1,
     });
+    if (response.items.length === 0 && lookup.market) {
+      const stockCode = normalizeStockCode(lookup.stockCode);
+      const history = await historyApi.getList({ stockCode, page: 1, limit: 1 });
+      const item = history.items?.[0];
+      if (item?.operationAdvice?.trim() && /^\d{4}-\d{2}-\d{2}/.test(item.createdAt || '')
+        && item.assetType !== 'index' && areStockCodesEquivalent(stockCode, item.stockCode)) {
+        return { items: [], error: null, history: { key: toPositionSignalLookupKey(lookup.stockCode, lookup.market), item } };
+      }
+    }
     return { items: response.items, error: null };
   } catch (err) {
     return { items: [], error: getParsedApiError(err).message };
@@ -654,6 +666,7 @@ const PortfolioPage: React.FC = () => {
   const [riskWarning, setRiskWarning] = useState<string | null>(null);
   const [writeWarning, setWriteWarning] = useState<string | null>(null);
   const [portfolioSignals, setPortfolioSignals] = useState<DecisionSignalItem[]>([]);
+  const [portfolioSignalHistory, setPortfolioSignalHistory] = useState<Map<string, HistoryItem>>(new Map());
   const [portfolioSignalsLoading, setPortfolioSignalsLoading] = useState(false);
   const [portfolioSignalsWarning, setPortfolioSignalsWarning] = useState<string | null>(null);
   const [portfolioSignalsRefreshKey, setPortfolioSignalsRefreshKey] = useState(0);
@@ -981,6 +994,7 @@ const PortfolioPage: React.FC = () => {
 
     if (positionSignalLookups.length === 0 || !snapshotMatchesAccountScope) {
       setPortfolioSignals([]);
+      setPortfolioSignalHistory(new Map());
       setPortfolioSignalsWarning(null);
       setPortfolioSignalsLoading(false);
       return;
@@ -1000,6 +1014,7 @@ const PortfolioPage: React.FC = () => {
       const collected = results.flatMap((result) => result.items);
       const failures = results.flatMap((result) => (result.error ? [result.error] : []));
       setPortfolioSignals(collected);
+      setPortfolioSignalHistory(new Map(results.flatMap((result) => result.history ? [[result.history.key, result.history.item] as const] : [])));
       setPortfolioSignalsWarning(
         failures.length > 0
           ? (
@@ -1749,6 +1764,7 @@ const PortfolioPage: React.FC = () => {
                     const rowKey = `${row.accountId}-${row.symbol}-${row.market}`;
                     const analyzing = positionAnalysisLoadingKey === rowKey;
                     const signal = signalByPositionKey.get(rowKey);
+                    const history = portfolioSignalHistory.get(toPositionSignalLookupKey(row.symbol, toDecisionSignalMarket(row.market)));
                     return (
                     <tr key={rowKey} className="border-b border-border/40 transition-colors last:border-0 hover:bg-hover/40">
                       <td className="whitespace-nowrap px-3 py-3 text-secondary">{row.accountName}</td>
@@ -1786,7 +1802,17 @@ const PortfolioPage: React.FC = () => {
                         {formatSignedPct(row.unrealizedPnlPct)}
                       </td>
                       <td className="px-3 py-3 text-right align-top">
-                        <PortfolioSignalSummary item={signal} loading={portfolioSignalsLoading} />
+                        {signal || portfolioSignalsLoading ? (
+                          <PortfolioSignalSummary item={signal} loading={portfolioSignalsLoading} />
+                        ) : history ? (
+                          <div className="text-xs text-secondary">
+                            <div className="font-medium text-foreground">{history.operationAdvice}</div>
+                            <div>{language === 'zh' ? '历史报告' : 'Historical report'} · {history.createdAt.slice(0, 10)}</div>
+                            <div>{language === 'zh' ? '非实时，请重新分析' : 'Not current; run a new analysis'}</div>
+                          </div>
+                        ) : (
+                          <span className="text-xs text-secondary">{language === 'zh' ? '暂无建议，请点击分析' : 'No advice; run an analysis'}</span>
+                        )}
                       </td>
                       <td className="whitespace-nowrap px-3 py-3 text-right">
                         <button

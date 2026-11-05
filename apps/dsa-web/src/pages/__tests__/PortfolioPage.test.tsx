@@ -30,6 +30,7 @@ const {
   analyzePosition,
   listDecisionSignals,
   getLatestDecisionSignals,
+  getHistory,
 } = vi.hoisted(() => ({
   getAccounts: vi.fn(),
   getSnapshot: vi.fn(),
@@ -52,7 +53,10 @@ const {
   analyzePosition: vi.fn(),
   listDecisionSignals: vi.fn(),
   getLatestDecisionSignals: vi.fn(),
+  getHistory: vi.fn(),
 }));
+
+vi.mock('../../api/history', () => ({ historyApi: { getList: getHistory } }));
 
 vi.mock('../../api/decisionSignals', () => ({
   decisionSignalsApi: {
@@ -292,6 +296,7 @@ describe('PortfolioPage FX refresh', () => {
     getAccounts.mockResolvedValue(makeAccounts());
     getSnapshot.mockImplementation(async ({ accountId }: { accountId?: number } = {}) => makeSnapshot({ accountId, fxStale: true }));
     getRisk.mockResolvedValue(makeRisk());
+    getHistory.mockResolvedValue({ items: [], total: 0, page: 1, limit: 1 });
     refreshFx.mockResolvedValue({
       asOf: '2026-03-19',
       accountCount: 1,
@@ -369,6 +374,23 @@ describe('PortfolioPage FX refresh', () => {
     expect(cells[headers.indexOf('名称')]).toHaveTextContent('贵州茅台');
     expect(cells[headers.indexOf('收益率')]).toHaveTextContent('+6.67%');
     expect(cells[headers.indexOf('AI 建议')]).not.toHaveTextContent('+6.67%');
+  });
+
+  it('shows dated historical advice when no structured signal exists', async () => {
+    getSnapshot.mockResolvedValueOnce(makeSnapshot({
+      positions: [makePosition({ symbol: '06082', market: 'hk', currency: 'HKD' })],
+    }));
+    getHistory.mockResolvedValueOnce({ items: [{
+      stockCode: 'HK06082', operationAdvice: '观望', actionLabel: '减仓',
+      createdAt: '2026-10-21T19:01:36+08:00', assetType: 'stock',
+    }] });
+    render(<PortfolioPage />);
+
+    expect(await screen.findByText('观望')).toBeInTheDocument();
+    expect(screen.getByText('历史报告 · 2026-10-21')).toBeInTheDocument();
+    expect(screen.getByText('非实时，请重新分析')).toBeInTheDocument();
+    expect(getHistory).toHaveBeenCalledWith({ stockCode: 'HK06082', page: 1, limit: 1 });
+    expect(screen.queryByText('减仓')).not.toBeInTheDocument();
   });
 
   it('renders stale FX status with a manual refresh button', async () => {
@@ -2115,7 +2137,7 @@ describe('PortfolioPage FX refresh', () => {
     });
     const aaplRow = screen.getByText('AAPL').closest('tr');
     expect(aaplRow).not.toBeNull();
-    expect(within(aaplRow as HTMLTableRowElement).getByText('—')).toBeInTheDocument();
+    expect(within(aaplRow as HTMLTableRowElement).getByText('暂无建议，请点击分析')).toBeInTheDocument();
   });
 
   it('shows a visible partial warning when one latest holding signal lookup fails', async () => {
