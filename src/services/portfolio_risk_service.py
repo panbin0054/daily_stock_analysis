@@ -7,6 +7,7 @@ import json
 import logging
 import time
 from datetime import date, timedelta
+from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 from src.config import Config, get_config
@@ -16,6 +17,27 @@ from src.services.decision_signal_summary import summarize_decision_signal
 from src.services.portfolio_service import PortfolioService
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=2)
+def _trading_calendar(market: str):
+    import exchange_calendars
+    return exchange_calendars.get_calendar({"cn": "XSHG", "hk": "XHKG"}[market])
+
+
+def _historical_price_missing_session(market: str, price_date: date, snapshot_date: date) -> bool:
+    if price_date > snapshot_date:
+        return True
+    if price_date == snapshot_date:
+        return False
+    if market in {"cn", "hk"}:
+        try:
+            return len(_trading_calendar(market).sessions_in_range(
+                (price_date + timedelta(days=1)).isoformat(), snapshot_date.isoformat()
+            )) > 0
+        except Exception as exc:
+            logger.warning("Could not check %s trading calendar: %s", market, exc)
+    return (snapshot_date - price_date).days > 4
 
 DEFENSIVE_DECISION_SIGNAL_ACTIONS = ("sell", "reduce", "alert")
 
@@ -734,8 +756,6 @@ class PortfolioRiskService:
     @staticmethod
     def _snapshot_has_unpriced_positions(row: Any) -> bool:
         """Identify valuation snapshots where active holdings were priced as unavailable."""
-        if float(getattr(row, "total_market_value", 0.0) or 0.0) > 0:
-            return False
         payload_text = getattr(row, "payload", None)
         if not payload_text:
             return False
@@ -753,8 +773,15 @@ class PortfolioRiskService:
             if not isinstance(pos, dict):
                 continue
             quantity = float(pos.get("quantity") or 0.0)
-            if quantity > 0 and pos.get("price_available") is False:
+            if quantity > 0 and (pos.get("price_available") is not True or not pos.get("price_date")):
                 return True
+            if quantity > 0 and pos.get("price_date") and getattr(row, "snapshot_date", None):
+                try:
+                    price_date = date.fromisoformat(str(pos["price_date"])[:10])
+                    if _historical_price_missing_session(str(pos.get("market") or "").lower(), price_date, row.snapshot_date):
+                        return True
+                except (TypeError, ValueError):
+                    return True
         return False
 
     @staticmethod

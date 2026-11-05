@@ -932,6 +932,18 @@ describe('PortfolioPage FX refresh', () => {
     expect(within(drawdownFlag as HTMLElement).getAllByText('不可用')).toHaveLength(2);
   });
 
+  it('explains why drawdown is unavailable when historical prices have gaps', async () => {
+    getRisk.mockResolvedValueOnce(makeRisk({
+      drawdown: { seriesPoints: 172, maxDrawdownPct: 19.3, currentDrawdownPct: 11.8,
+        alert: true, fxStale: false, skippedPoints: 9, carriedForwardPoints: 119 },
+    }));
+    render(<PortfolioPage />);
+    await waitForInitialLoad();
+    expect(await screen.findByText('缺价日期: 9 · 沿用前值日期: 119')).toBeInTheDocument();
+    const drawdownCard = screen.getByText('回撤监控').closest('div.rounded-2xl');
+    expect(within(drawdownCard as HTMLElement).getByText('最大回撤: --')).toBeInTheDocument();
+  });
+
   it('treats one-point drawdown as unavailable because no decline can be measured', async () => {
     getRisk.mockResolvedValueOnce(makeRisk({
       drawdown: {

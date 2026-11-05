@@ -848,11 +848,47 @@ class PortfolioPr2TestCase(unittest.TestCase):
             rate = PortfolioService._fetch_fx_rate_from_yfinance(
                 from_currency="HKD",
                 to_currency="CNY",
-                as_of_date=date(2026, 1, 2),
+                as_of_date=date.today(),
             )
 
         self.assertAlmostEqual(rate, 0.91, places=6)
         get_mock.assert_called_once_with("https://open.er-api.com/v6/latest/HKD", timeout=8)
+
+    def test_historical_fx_never_uses_latest_rate_fallback(self) -> None:
+        with patch("src.services.portfolio_service.yf") as yf_mock, patch.object(
+            PortfolioService, "_fetch_fx_rate_from_open_er_api"
+        ) as latest:
+            yf_mock.Ticker.side_effect = RuntimeError("unavailable")
+            rate = PortfolioService._fetch_fx_rate_from_yfinance(
+                from_currency="HKD", to_currency="CNY", as_of_date=date(2020, 1, 2)
+            )
+        self.assertIsNone(rate)
+        latest.assert_not_called()
+
+    def test_old_fx_rate_is_stale_but_weekend_rate_is_usable(self) -> None:
+        self.service.repo.save_fx_rate(from_currency="HKD", to_currency="CNY", rate_date=date(2026, 1, 2), rate=0.9)
+        self.assertFalse(self.service.convert_amount(amount=10, from_currency="HKD", to_currency="CNY", as_of_date=date(2026, 1, 4))[1])
+        self.assertTrue(self.service.convert_amount(amount=10, from_currency="HKD", to_currency="CNY", as_of_date=date(2026, 1, 10))[1])
+
+    def test_partially_unpriced_snapshot_is_detected(self) -> None:
+        from types import SimpleNamespace
+        row = SimpleNamespace(total_market_value=100, payload='{"positions":[{"quantity":1,"price_available":true},{"quantity":1,"price_available":false}]}')
+        self.assertTrue(PortfolioRiskService._snapshot_has_unpriced_positions(row))
+
+    def test_old_historical_price_is_not_treated_as_complete(self) -> None:
+        from types import SimpleNamespace
+        row = SimpleNamespace(snapshot_date=date(2026, 1, 10), payload='{"positions":[{"quantity":1,"price_available":true,"price_date":"2026-01-02"}]}')
+        self.assertTrue(PortfolioRiskService._snapshot_has_unpriced_positions(row))
+
+    def test_historical_price_without_date_is_not_treated_as_complete(self) -> None:
+        from types import SimpleNamespace
+        row = SimpleNamespace(snapshot_date=date(2026, 1, 10), payload='{"positions":[{"quantity":1,"price_available":true}]}')
+        self.assertTrue(PortfolioRiskService._snapshot_has_unpriced_positions(row))
+
+    def test_historical_price_uses_market_calendar_for_holidays(self) -> None:
+        from src.services.portfolio_risk_service import _historical_price_missing_session
+        self.assertFalse(_historical_price_missing_session("cn", date(2026, 9, 30), date(2026, 10, 7)))
+        self.assertTrue(_historical_price_missing_session("cn", date(2026, 9, 30), date(2026, 10, 8)))
 
     def test_fx_refresh_disabled_returns_real_pair_count_without_fetching(self) -> None:
         account = self.service.create_account(name="US", broker="Demo", market="us", base_currency="CNY")

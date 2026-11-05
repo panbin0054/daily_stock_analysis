@@ -43,6 +43,7 @@ VALID_CASH_DIRECTIONS = {"in", "out"}
 VALID_CORPORATE_ACTIONS = {"cash_dividend", "split_adjustment"}
 PORTFOLIO_FX_REFRESH_DISABLED_REASON = "portfolio_fx_update_disabled"
 PORTFOLIO_AGGREGATE_CURRENCY = "CNY"
+PORTFOLIO_FX_MAX_AGE_DAYS = 4
 PORTFOLIO_REALTIME_PRICE_CACHE_TTL_SECONDS = 60.0
 PORTFOLIO_REALTIME_QUOTE_MAX_WORKERS = 4
 
@@ -1561,7 +1562,8 @@ class PortfolioService:
             as_of=as_of_date,
         )
         if direct is not None and direct.rate > 0:
-            return float(amount) * float(direct.rate), bool(direct.is_stale), "direct_rate"
+            stale = bool(direct.is_stale) or (as_of_date - direct.rate_date).days > PORTFOLIO_FX_MAX_AGE_DAYS
+            return float(amount) * float(direct.rate), stale, "direct_rate"
 
         inverse = self.repo.get_latest_fx_rate(
             from_currency=to_norm,
@@ -1569,7 +1571,8 @@ class PortfolioService:
             as_of=as_of_date,
         )
         if inverse is not None and inverse.rate > 0:
-            return float(amount) / float(inverse.rate), bool(inverse.is_stale), "inverse_rate"
+            stale = bool(inverse.is_stale) or (as_of_date - inverse.rate_date).days > PORTFOLIO_FX_MAX_AGE_DAYS
+            return float(amount) / float(inverse.rate), stale, "inverse_rate"
 
         # P0 fallback: keep pipeline available even when FX cache is missing.
         return float(amount), True, "fallback_1_to_1"
@@ -1734,10 +1737,12 @@ class PortfolioService:
                     as_of_date.isoformat(),
                     exc,
                 )
-        return PortfolioService._fetch_fx_rate_from_open_er_api(
-            from_currency=from_currency,
-            to_currency=to_currency,
-        )
+        if as_of_date == date.today():
+            return PortfolioService._fetch_fx_rate_from_open_er_api(
+                from_currency=from_currency,
+                to_currency=to_currency,
+            )
+        return None
 
     @staticmethod
     def _fetch_fx_rate_from_open_er_api(

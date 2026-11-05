@@ -116,6 +116,8 @@ export interface PortfolioSectorConcentrationItem {
 
 export interface PortfolioDrawdownBlock {
   seriesPoints: number;
+  skippedPoints?: number;
+  carriedForwardPoints?: number;
   maxDrawdownPct: number;
   currentDrawdownPct: number;
   alert: boolean;

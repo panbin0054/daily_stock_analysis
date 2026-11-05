@@ -361,6 +361,8 @@ function getPortfolioRiskAvailability(
       && drawdown.seriesPoints > 1
       && hasBooleanField(drawdown, 'fxStale')
       && drawdown.fxStale === false
+      && (drawdown.skippedPoints ?? 0) === 0
+      && (drawdown.carriedForwardPoints ?? 0) === 0
       && hasBooleanField(drawdown, 'alert'),
     stopLoss: priceCoverageAvailable
       && hasNumberField(stopLoss, 'triggeredCount')
@@ -1881,6 +1883,11 @@ const PortfolioPage: React.FC = () => {
             <div>{text.maxDrawdown}: {riskAvailability.drawdown ? formatPct(risk?.drawdown?.maxDrawdownPct) : '--'}</div>
             <div>{text.currentDrawdown}: {riskAvailability.drawdown ? formatPct(risk?.drawdown?.currentDrawdownPct) : '--'}</div>
             <div>{text.alert}: {riskAvailability.drawdown ? (risk?.drawdown?.alert ? text.yes : text.no) : riskDashboardText.unavailable}</div>
+            {risk?.drawdown?.fxStale ? <div>{language === 'zh' ? '历史汇率缺失或过期' : 'Historical FX is missing or stale'}</div> : null}
+            {(risk?.drawdown?.skippedPoints ?? 0) > 0 || (risk?.drawdown?.carriedForwardPoints ?? 0) > 0 ? (
+              <div>{language === 'zh' ? '缺价日期' : 'Incomplete dates'}: {risk?.drawdown?.skippedPoints ?? 0} · {language === 'zh' ? '沿用前值日期' : 'Carried-forward dates'}: {risk?.drawdown?.carriedForwardPoints ?? 0}</div>
+            ) : null}
+            <div>{language === 'zh' ? '按总权益计算，未剔除出入金影响。' : 'Based on total equity; deposits and withdrawals are not excluded.'}</div>
           </div>
         </Card>
         <Card padding="md">
