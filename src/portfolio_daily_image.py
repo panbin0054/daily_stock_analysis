@@ -1,5 +1,21 @@
 from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
+import math
+
+
+def position_pnl(snapshot):
+    positions = [p for account in snapshot.get('accounts', []) for p in account.get('positions', []) if p.get('quantity', 0) > 0]
+    if any(p.get('price_available') is False or p.get('price_source') == 'missing'
+           or not isinstance(p.get('last_price'), (int, float))
+           or not math.isfinite(p['last_price']) or p['last_price'] <= 0 for p in positions):
+        return None, None
+    pnl, market = snapshot.get('unrealized_pnl'), snapshot.get('total_market_value')
+    if not isinstance(pnl, (int, float)) or not math.isfinite(pnl):
+        return None, None
+    if not isinstance(market, (int, float)) or not math.isfinite(market):
+        return pnl, None
+    cost = market - pnl
+    return pnl, pnl / cost * 100 if cost > 0 else None
 
 
 def render_report(data):
@@ -28,8 +44,13 @@ def render_report(data):
     txt(1137,67,'每日更新',21,'#bcd4ef',False,'ra')
     txt(1137,111,data['generated']+'  北京时间',20,'#b9c9dc',False,'ra')
 
-    for i,(label,key) in enumerate([('总权益','total_equity'),('持仓市值','total_market_value'),('总现金','total_cash')]):
-        x=25+i*390; card(x,210,x+370,350); txt(x+24,234,label,23,'#6b7890'); txt(x+24,278,'¥ '+money(s.get(key)),34,'#17253d',True)
+    pnl, pnl_pct = position_pnl(s)
+    for i,(label,key) in enumerate([('总权益','total_equity'),('持仓市值','total_market_value'),('总现金','total_cash'),('持仓盈亏',None)]):
+        x=25+i*292; card(x,210,x+274,350); txt(x+20,230,label,22,'#6b7890')
+        value = s.get(key) if key else pnl
+        color = ('#dc4b42' if pnl < 0 else '#19a275') if key is None and pnl is not None else '#17253d'
+        txt(x+20,270,('¥ '+money(value)) if value is not None else '—',28,color,True)
+        if key is None: txt(x+20,310,pct(pnl_pct),20,color)
 
     txt(30,383,'风险与暴露',29,'#18283e',True)
     txt(1167,391,'红色表示达到预警条件',19,'#8592a5',False,'ra')

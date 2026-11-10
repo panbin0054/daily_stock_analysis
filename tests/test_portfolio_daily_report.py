@@ -4,6 +4,23 @@ from unittest.mock import patch
 import pytest
 
 from src.portfolio_daily_report import build_report, is_report_day
+from src.portfolio_daily_image import position_pnl
+
+
+def test_position_pnl_uses_unrealized_cost_basis_and_excludes_cash():
+    snapshot = {'total_market_value': 1200, 'unrealized_pnl': 200, 'total_cash': 9000,
+                'accounts': [{'positions': [{'quantity': 1, 'last_price': 1200, 'price_available': True}]}]}
+    assert position_pnl(snapshot) == (200, 20)
+
+
+def test_position_pnl_degrades_if_any_position_is_unpriced():
+    snapshot = {'total_market_value': 1200, 'unrealized_pnl': 200,
+                'accounts': [{'positions': [{'quantity': 1, 'last_price': 0, 'price_available': False}]}]}
+    assert position_pnl(snapshot) == (None, None)
+
+
+def test_position_pnl_has_no_ratio_when_cost_is_zero():
+    assert position_pnl({'total_market_value': 0, 'unrealized_pnl': 0, 'accounts': []}) == (0, None)
 
 
 @pytest.mark.parametrize('sessions,expected', [

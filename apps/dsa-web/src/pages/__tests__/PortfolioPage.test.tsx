@@ -359,6 +359,32 @@ describe('PortfolioPage FX refresh', () => {
     expect(getRisk).toHaveBeenCalledWith({ accountId: undefined, costMethod: 'fifo', includeRealtime: true });
   });
 
+  it('shows position profit and return using the portfolio cost basis', async () => {
+    getSnapshot.mockResolvedValueOnce({
+      ...makeSnapshot({ fxStale: false, positions: [makePosition()] }),
+      totalMarketValue: 1200,
+      unrealizedPnl: 200,
+      totalCash: 9000,
+    });
+    render(<PortfolioPage />);
+    await waitForInitialLoad();
+    expect(screen.getByText('持仓盈亏')).toBeInTheDocument();
+    expect(screen.getByText(/CNY 200\.00/)).toHaveTextContent('+20.00%');
+    expect(screen.getByRole('button', { name: '刷新汇率' }).parentElement)
+      .toContainElement(screen.getByRole('button', { name: '刷新数据' }));
+  });
+
+  it('does not present a partial profit when a position has no price', async () => {
+    getSnapshot.mockResolvedValueOnce({
+      ...makeSnapshot({ positions: [makePosition({ priceAvailable: false, lastPrice: 0 })] }),
+      totalMarketValue: 1200,
+      unrealizedPnl: 200,
+    });
+    render(<PortfolioPage />);
+    await waitForInitialLoad();
+    expect(screen.getByText('持仓盈亏').parentElement?.parentElement).toHaveTextContent('-- (--)');
+  });
+
   it('renders each concentration legend entry on its own row', async () => {
     getSnapshot.mockResolvedValueOnce(makeSnapshot({ fxStale: false, positions: [makePosition()] }));
     getRisk.mockResolvedValueOnce(makeRisk({

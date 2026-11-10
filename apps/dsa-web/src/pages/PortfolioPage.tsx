@@ -940,6 +940,14 @@ const PortfolioPage: React.FC = () => {
   }, [snapshot]);
   // A missing snapshot is unknown, not a successfully loaded empty portfolio.
   const positionCount = snapshot === null ? '--' : positionRows.length;
+  const hasCompletePositionPrices = positionRows.every((position) =>
+    hasPositionPrice(position) && Number.isFinite(position.lastPrice) && position.lastPrice > 0,
+  );
+  const positionPnl = snapshot && hasCompletePositionPrices && Number.isFinite(snapshot.unrealizedPnl)
+    ? snapshot.unrealizedPnl : null;
+  const positionCost = snapshot && positionPnl !== null && Number.isFinite(snapshot.totalMarketValue)
+    ? snapshot.totalMarketValue - positionPnl : null;
+  const positionPnlPct = positionCost !== null && positionCost > 0 ? positionPnl! / positionCost * 100 : null;
   const exposureTotal = snapshot?.totalMarketValue;
   const exposureEmptyLabel = snapshot !== null && positionRows.length === 0 && hasFreshFxEvidence(snapshot)
     ? riskDashboardText.noExposure
@@ -1455,7 +1463,7 @@ const PortfolioPage: React.FC = () => {
         </div>
         {hasAccounts ? (
           <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_220px_280px] gap-2 items-end">
+            <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_220px_minmax(400px,auto)] gap-2 items-end">
               <div>
                 <p className="text-xs text-secondary mb-1">{text.accountView}</p>
                 <select
@@ -1501,6 +1509,14 @@ const PortfolioPage: React.FC = () => {
                   className="btn-secondary text-sm flex-1"
                 >
                   {isLoading ? text.refreshing : text.refreshData}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-sm flex-1 whitespace-nowrap"
+                  onClick={() => void handleRefreshFx()}
+                  disabled={!hasAccounts || isLoading || fxRefreshing}
+                >
+                  {fxRefreshing ? text.refreshing : text.refreshFx}
                 </button>
                 <button
                   type="button"
@@ -1643,21 +1659,19 @@ const PortfolioPage: React.FC = () => {
         </Card>
         <Card variant="gradient" padding="md">
           <div className="flex items-start justify-between gap-3">
-            <p className="text-xs text-secondary">{text.fxStatus}</p>
-            <button
-              type="button"
-              className="btn-secondary !px-3 !py-1 !text-xs shrink-0"
-              onClick={() => void handleRefreshFx()}
-              disabled={!hasAccounts || isLoading || fxRefreshing}
-            >
-              {fxRefreshing ? text.refreshing : text.refreshFx}
-            </button>
+            <p className="text-xs text-secondary">{text.positionPnl}</p>
+            <div className="flex items-center gap-2 text-xs text-secondary">
+              <span>{text.fxStatus}</span>
+              {snapshot?.fxStale === true
+                ? <Badge variant="warning">{text.stale}</Badge>
+                : snapshot?.fxStale === false
+                  ? <Badge variant="success">{text.latest}</Badge>
+                  : <Badge variant="default">{riskDashboardText.unavailable}</Badge>}
+            </div>
           </div>
-          <div className="mt-2">{snapshot?.fxStale === true
-            ? <Badge variant="warning">{text.stale}</Badge>
-            : snapshot?.fxStale === false
-              ? <Badge variant="success">{text.latest}</Badge>
-              : <Badge variant="default">{riskDashboardText.unavailable}</Badge>}</div>
+          <p className={`mt-1 text-xl font-semibold ${positionPnl === null ? 'text-secondary' : positionPnl >= 0 ? 'text-success' : 'text-danger'}`}>
+            {formatMoney(positionPnl, snapshot?.currency || 'CNY')} <span className="text-sm">({formatSignedPct(positionPnlPct)})</span>
+          </p>
           {fxRefreshFeedback ? (
             <InlineAlert
               variant={getFxRefreshFeedbackVariant(fxRefreshFeedback.tone)}
