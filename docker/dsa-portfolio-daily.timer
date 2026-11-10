@@ -1,0 +1,9 @@
+[Unit]
+Description=DSA daily portfolio report schedule
+
+[Timer]
+OnCalendar=*-*-* 19:00:00 Asia/Shanghai
+Persistent=false
+
+[Install]
+WantedBy=timers.target

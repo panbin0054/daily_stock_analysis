@@ -333,3 +333,11 @@ Secret 适合 token、password、webhook URL 等敏感项；Variable 适合 `WEC
 - GitHub Actions：清空或删除对应 Secret / Variable；未映射的 key 不会进入 workflow 运行进程。
 - Desktop：使用配置备份导入旧 `.env`，或在设置页清空对应渠道配置并保存。
 - 版本回退：P6/P7 新增的 `NTFY_*`、`GOTIFY_*`、路由和降噪 key 在旧版本中会被忽略；若要避免误导，应同时从 `.env` 或 Actions 配置中移除。
+
+## 每日持仓图片
+
+持仓日报由 `python -m src.portfolio_daily_report` 生成并发送到已配置的 Telegram。每日 19:00（北京时间）检查 A 股和港股交易日，任一市场交易时发送；两个市场均休市时跳过，交易日历不可用时记录错误，不猜测交易日。手动发送可增加 `--force` 参数。
+
+发送前依次刷新汇率和持仓行情，再基于同一份快照计算风险。刷新失败时图中标注旧数据；历史回撤使用的汇率过期时单独标注。止损提示依据成本和亏损阈值，并非独立设定的个股止损价。Telegram 无法发送图片时任务失败并记入日志。
+
+Docker 部署可将 `docker/dsa-portfolio-daily.service` 和 `docker/dsa-portfolio-daily.timer` 安装到 systemd，启用 timer；服务要求运行中的容器名为 `dsa-server`，且包含最新的 `src/portfolio_daily_report.py` 与 `src/portfolio_daily_image.py`。

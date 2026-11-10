@@ -1,0 +1,10 @@
+[Unit]
+Description=Send DSA daily portfolio report to Telegram
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/docker exec dsa-server python -m src.portfolio_daily_report
+TimeoutStartSec=1200
